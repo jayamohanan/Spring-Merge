@@ -56,7 +56,18 @@ function sharedAssets() {
     // Grain for the cell faces: neutral grey + blurred noise, blended over the
     // flat colour at bake time (see _makeCellTextures).
     A.image('cell_noise', 'graphics/ui/merge-grid/cell_noise.webp');
+    // THE PAYLOADS the springs launch, one per level, looping (see payloadKey).
+    // Few and small, so all of them load up front.
+    (CONFIG.PAYLOAD && CONFIG.PAYLOAD.FILES || []).forEach((f, i) =>
+        A.image(`payload_${i + 1}`, `graphics/payload/${f}.webp`));
     return A.list();
+}
+
+// The payload a level launches (three of it, one per spring): PAYLOAD.FILES
+// in order, looping once they run out.
+function payloadKey(level) {
+    const n = Math.max(1, (CONFIG.PAYLOAD && CONFIG.PAYLOAD.FILES || []).length);
+    return `payload_${((Math.max(1, level) - 1) % n) + 1}`;
 }
 
 // The keys an item's two SOURCE pictures load under. The finished item is

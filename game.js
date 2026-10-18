@@ -231,7 +231,7 @@ class GameScene extends Phaser.Scene {
         this.springGeo         = null;   // where they are drawn (createSprings)
         this.springGfx         = null;
         this.springLabels      = [];
-        this.releaseBtn        = null;
+        this.countdown         = null;   // the 3-2-1 before a launch (_startCountdown)
         this.steeringItems     = [];     // slot piggies whose wheels turn
 
         // Layout state for responsive design
@@ -598,6 +598,8 @@ class GameScene extends Phaser.Scene {
         if (this.draggingBattery) return 'a pig is being dragged';
         if (this.isWatchingAd)    return 'an ad is playing';
         if ((this._coinFlights || 0) > 0) return 'coins in flight';
+        if (this.flight)                  return 'a launch in flight';
+        if (this.countdown)               return 'a launch counting down';
         const t = this.tweens.getTweens().filter((tw) => !tw.isInfinite).length;
         return t ? `${t} tween(s) running` : null;
     }
@@ -635,9 +637,12 @@ class GameScene extends Phaser.Scene {
         for (const row of this.gridCells) for (const cd of row || []) { gone(cd.cell); gone(cd.filledBg); }
         for (const p of this.platforms) { gone(p.slotBg); gone(p.slotBgFilled); gone(p.chargeRateText); }
         gone(this.springGfx);
+        gone(this.skyGfx);
+        gone(this.flightGfx);
+        for (const p of this.payloads || []) gone(p);
+        this.payloads = [];
         for (const t of this.springLabels) gone(t);
-        gone(this.releaseBtn);
-        this.springGfx = this.releaseBtn = null;
+        this.springGfx = null;
         this.springLabels = [];
         gone(this.coinIcon);
         gone(this.coinText);
@@ -1022,7 +1027,7 @@ class GameScene extends Phaser.Scene {
     // ================================================================
     // Three columns across partB. In each, a slot along the half's bottom
     // edge with its piggy's figure over it, and a spring standing on a base
-    // plate above that, what it still needs (MAX! when full) over its top. Slots wear
+    // plate above that, what it still needs (MAX! when full) between the two. Slots wear
     // the same grained face as a grid cell, so a slot and a cell read as the
     // same kind of object.
     //
@@ -1054,12 +1059,13 @@ class GameScene extends Phaser.Scene {
         probe.destroy();
 
         // BOTTOM UP: the slot on the half's bottom edge, its figure over it,
-        // then the spring's base plate.
+        // then the spring's own figure, then the spring's base plate.
         const slotY    = B.y + B.height - s(v(SP.BOTTOM_PAD, 30)) - ssz / 2;
         const rateY    = slotY - ssz / 2 - s(P.CHARGE_RATE_GAP);          // figure's bottom
         const plateRef = v(SP.PLATE_H, 24), restRef = v(SP.REST_HEIGHT, 520);
-        const plateBot = rateY - labelH - s(v(SP.BASE_GAP, 14));
         const labelGap = s(10);
+        const labelY   = rateY - labelH - s(v(SP.BASE_GAP, 14));          // spring figure's bottom
+        const plateBot = labelY - labelH - labelGap;
         // THE SPRING'S SIZE, k × design: as big as fits between the base and
         // the half's top (with its label), and across its column.
         // The plates are discs in perspective: each face's ellipse reaches its
@@ -1067,29 +1073,22 @@ class GameScene extends Phaser.Scene {
         // base, over the top.
         const ryOf = (rx) => rx * v(SP.COIL_TILT, 22) / (v(SP.WIDTH, 170) / 2);
         const ryBase = ryOf(v(SP.WIDTH, 170) / 2 + 30), ryTop = ryOf(v(SP.WIDTH, 170) / 2 + 10);
-        const room = plateBot - (B.y + s(v(SP.TOP_PAD, 24)) + labelH + labelGap);
+        const room = plateBot - (B.y + s(v(SP.TOP_PAD, 24)));
         const k = Math.max(0.05, Math.min(
             room / (restRef + 2 * plateRef + ryBase + ryTop),
             colW * 0.9 / (v(SP.WIDTH, 170) + 60),
-            v(SP.MAX_SCALE, 1)));
+            v(SP.MAX_SCALE, 1)) * v(SP.SIZE, 1));
         const baseY = plateBot - (plateRef + ryBase) * k;                 // top of the base plate
         const xs = [0, 1, 2].map((i) => B.x + colW * (i + 0.5));
         this.springGeo = { xs, baseY, k };
 
         this.springGfx = this.add.graphics().setDepth(v(SP.DEPTH, 2));
-        const labelY = baseY - (restRef + plateRef + ryTop) * k - labelGap;
+        this.skyGfx    = this.add.graphics().setDepth(1);
+        this.flightGfx = this.add.graphics().setDepth(((CONFIG.SKY || {}).FLIGHT || {}).DEPTH || 40).setVisible(false);
+        // A launch in flight is never relaid (it holds the relayout with its
+        // tweens), so every spring not letting go gets its payload back here.
+        this.payloads = this.springs.map((s, i) => (s.phase === 'releasing' ? null : this._makePayload(i, false)));
         this.springLabels = xs.map((x) => this.add.text(x, labelY, '', style).setOrigin(0.5, 1).setDepth(5));
-
-        const RB = SP.RELEASE_BTN || {};
-        this.releaseBtn = this.add.text(B.x + B.width / 2, baseY - restRef * k * v(RB.Y_FRAC, 0.45),
-            RB.TEXT || 'RELEASE', {
-                fontFamily: CONFIG.FONT_FAMILY, fontStyle: CONFIG.FONT_WEIGHT,
-                fontSize: Math.max(12, Math.round(v(RB.SIZE, 56) * scale)) + 'px',
-                color: RB.COLOR || '#FFFFFF', backgroundColor: RB.BG || '#E53935',
-                padding: { x: Math.round(v(RB.PAD_X, 40) * scale), y: Math.round(v(RB.PAD_Y, 16) * scale) },
-            }).setOrigin(0.5).setDepth(50).setVisible(false)
-            .setInteractive({ useHandCursor: true });
-        this.releaseBtn.on('pointerdown', () => this._releaseSprings());
 
         // The face texture the filled state uses, baked at the GRID's cell size
         // and scaled down here — one texture for both.
@@ -1473,6 +1472,7 @@ class GameScene extends Phaser.Scene {
             if (!slot || !this._springWorking(i)) continue;
             s.compressed = Math.min(s.max, s.compressed + slot.perSec);
             this._stepSpring(s);
+            this._pushArrow(s);
             this._pulseRate(i);
             if (s.compressed >= s.max) s.phase = 'ready';
         }
@@ -1488,6 +1488,16 @@ class GameScene extends Phaser.Scene {
         this.tweens.add({ targets: t, scale: P.SCALE !== undefined ? P.SCALE : 1.2,
             duration: (P.MS !== undefined ? P.MS : 200) / 2, yoyo: true, ease: 'Quad.easeOut',
             onComplete: () => t.setScale(1) });
+    }
+
+    // THE PULL, MADE VISIBLE: chevrons inside the coil slide toward the base
+    // on each tick and fade, so the squeeze has a cause (SPRING.ARROW). s.arrow runs 0..1;
+    // _drawSpring draws it.
+    _pushArrow(s) {
+        const A = (CONFIG.SPRING || {}).ARROW || {};
+        if (A.ENABLED === false) return;
+        s.arrow = 0;
+        this.tweens.add({ targets: s, arrow: 1, duration: A.MS || 450, ease: 'Linear' });
     }
 
     // A slot's figure: what its piggy squeezes per second.
@@ -1534,6 +1544,41 @@ class GameScene extends Phaser.Scene {
         });
     }
 
+    // 3, 2, 1 — over the springs once all are full, then they let go. If the
+    // release cannot happen then (an ad), the springs stay full and the next
+    // frame starts the count again.
+    _startCountdown() {
+        const CD = (CONFIG.SPRING || {}).COUNTDOWN || {}, G = this.springGeo;
+        if (!G) return;
+        const L = this.layoutConfig, B = L.partB, scale = L.platformScale;
+        const y = G.baseY - ((CONFIG.SPRING || {}).REST_HEIGHT || 520) * G.k * (CD.Y_FRAC !== undefined ? CD.Y_FRAC : 0.45);
+        const txt = this.add.text(B.x + B.width / 2, y, '', {
+            fontFamily: CONFIG.FONT_FAMILY, fontStyle: CONFIG.FONT_WEIGHT,
+            fontSize: Math.max(12, Math.round((CD.SIZE || 120) * scale)) + 'px',
+            color: CD.COLOR || '#FFFFFF', stroke: CD.STROKE || '#E53935',
+            strokeThickness: Math.round((CD.STROKE_W || 10) * scale),
+        }).setOrigin(0.5).setDepth(50);
+        const c = this.countdown = { txt, n: CD.FROM || 3, timer: null };
+        const tick = () => {
+            if (this.countdown !== c) return;
+            if (c.n <= 0) { this._endCountdown(); this._releaseSprings(); return; }
+            txt.setText(String(c.n)).setScale(CD.POP || 1.6).setAlpha(1);
+            this.tweens.add({ targets: txt, scale: 1, duration: 300, ease: 'Back.Out' });
+            c.n--;
+            c.timer = this.time.delayedCall(CD.STEP_MS || 800, tick);
+        };
+        tick();
+    }
+
+    _endCountdown() {
+        const c = this.countdown;
+        if (!c) return;
+        this.countdown = null;
+        if (c.timer) c.timer.remove(false);
+        this.tweens.killTweensOf(c.txt);
+        c.txt.destroy();
+    }
+
     // LET GO, ALL AT ONCE — only when every spring is fully compressed. Each
     // coil snaps back past rest and settles, a ripple runs up it, dust kicks
     // off the base and the screen jolts; the release pays out the level's
@@ -1548,16 +1593,23 @@ class GameScene extends Phaser.Scene {
             s.phase = 'releasing';
             this.tweens.killTweensOf(s);
             s.bulge = 0;
+            s.arrow = 1;
             this.tweens.add({
                 targets: s, squeeze: 0,
                 duration: sc.RELEASE_MS || 700,
                 ease: 'Elastic.Out',
-                onComplete: () => { s.max = next[i]; s.compressed = 0; s.phase = 'compressing'; },
+                onComplete: () => {
+                    s.max = next[i]; s.compressed = 0; s.phase = 'compressing';
+                    // Mid-flight, the flight's end brings them (_endFlight).
+                    if (!this.flight) this.payloads[i] = this._makePayload(i, true);
+                },
             });
+            this._launchPayload(i);
             this._startRipple(s, sc.RELEASE_RIPPLE || 30, -1);
             this._spawnDust(i);
         });
         this.cameras.main.shake(sc.SHAKE_MS || 150, sc.SHAKE_INTENSITY || 0.006);
+        this._startFlight(this.level - 1);
         this._drawSprings();
         // FROM THE MIDDLE SPRING'S TOP, where the eye is when it lets go.
         const G = this.springGeo;
@@ -1603,7 +1655,289 @@ class GameScene extends Phaser.Scene {
     _updateSprings(delta) {
         this._springT = (this._springT || 0) + delta;
         this._updateDust(delta);
+        const dt = Math.min(delta, 50) / 1000;
+        if (this.skyGfx && this.skyGfx.scene) { this.skyGfx.clear(); this._drawSky(this.skyGfx, 0, 0, dt); }
+        this._updateFlight(dt);
         this._drawSprings();
+    }
+
+    // ── PAYLOADS ─────────────────────────────────────────────────────────────
+
+    // Spring i's payload for the current level, sized to the spring. _drawSpring
+    // seats it on the top plate every frame; `drop` brings it in from above.
+    _makePayload(i, drop) {
+        const PL = CONFIG.PAYLOAD || {}, G = this.springGeo;
+        const key = payloadKey(this.level);
+        if (!G || !this.textures.exists(key)) return null;
+        const img = this.add.image(G.xs[i], G.baseY, key).setOrigin(0.5, 1).setDepth(PL.DEPTH || 4);
+        const src = img.frame;
+        img.setScale((PL.SIZE || 120) * G.k / Math.max(src.width, src.height));
+        img.dropOff = 0;
+        if (drop) {
+            img.dropOff = -(PL.DROP_PX || 120) * G.k;
+            img.setAlpha(0);
+            this.tweens.add({ targets: img, dropOff: 0, alpha: 1, duration: PL.DROP_MS || 500, ease: 'Bounce.Out' });
+        }
+        return img;
+    }
+
+    // Off the spring and up, out of the top of the screen — fast from the
+    // start, as the spring flings it — turning a little and shrinking into the
+    // distance.
+    _launchPayload(i) {
+        const PL = CONFIG.PAYLOAD || {}, img = this.payloads[i];
+        this.payloads[i] = null;
+        if (!img || !img.scene) return;
+        this.tweens.killTweensOf(img);
+        img.setAlpha(1).setDepth(6);
+        const B = this.layoutConfig.partB, spin = PL.LAUNCH_SPIN !== undefined ? PL.LAUNCH_SPIN : 25;
+        this.tweens.add({
+            targets: img,
+            y: B.y - 2 * B.height,
+            scale: img.scale * 0.6,
+            angle: (Math.random() * 2 - 1) * spin,
+            duration: PL.LAUNCH_MS || 900, ease: 'Cubic.Out',
+            onComplete: () => img.destroy(),
+        });
+    }
+
+    // ── THE SKY ──────────────────────────────────────────────────────────────
+    // ONE WORLD, seen at an altitude `alt` (in half-heights above the ground):
+    // the top of the Earth at the bottom, blue sky and clouds over it, and
+    // higher up the sky goes dark and the stars come out. The spring half sits
+    // at alt 0 (skyGfx, under the springs). A launch cuts to the FLIGHT — the
+    // same world drawn over the whole half (flightGfx), climbing ever faster
+    // with the payloads in view, until it fades back to the springs.
+
+    _skyWorld() {
+        if (this._sky) return this._sky;
+        const S = CONFIG.SKY || {}, C = S.CLOUDS || {};
+        const clouds = [], stars = [];
+        for (let n = 0; n < (C.COUNT || 9); n++)
+            clouds.push({ alt: (C.FROM || 0.35) + ((C.TO || 2.4) - (C.FROM || 0.35)) * (n + Math.random()) / (C.COUNT || 9),
+                          x: Math.random(), s: 0.6 + 0.8 * Math.random(), v: (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random()) });
+        for (let n = 0; n < (S.STARS || 80); n++)
+            stars.push({ x: Math.random(), y: Math.random(), z: 0.3 + 0.7 * Math.random() });
+        return (this._sky = { clouds, stars });
+    }
+
+    // The world at `alt`, over partB, into g. `speed` is how fast it is
+    // climbing (half-heights per second): the stars scroll by it, and streak.
+    _drawSky(g, alt, speed, dt) {
+        const S = CONFIG.SKY || {}, W = this._skyWorld();
+        const L = this.layoutConfig, B = L.partB, H = B.height, sc = L.platformScale;
+        const clamp = (x) => Math.max(0, Math.min(1, x));
+        const dark = clamp(alt / (S.SPACE_ALT || 2.5));                // 0 blue sky .. 1 space
+        const top = lerpColor(hexColor(S.SKY_TOP || '#3A8DDE'), hexColor(S.SPACE_TOP || '#05071A'), clamp(dark * 1.4));
+        const bot = lerpColor(hexColor(S.SKY_BOT || '#BFE6FF'), hexColor(S.SPACE_BOT || '#151040'), dark);
+        g.fillGradientStyle(top, top, bot, bot, 1);
+        g.fillRect(B.x, B.y, B.width, H);
+
+        // STARS, in screen space: they fade in as the sky darkens and scroll
+        // down at the climb's own speed.
+        const starA = clamp((dark - 0.45) / 0.55);
+        if (starA > 0) {
+            const col = hexColor(S.STAR_COLOR || '#FFFFFF');
+            for (const st of W.stars) {
+                st.y += speed * st.z * dt;
+                if (st.y > 1) { st.y -= Math.floor(st.y); st.x = Math.random(); }
+                const x = B.x + st.x * B.width, y = B.y + st.y * H;
+                const r = Math.max(0.5, (S.STAR_SIZE || 2.2) * sc * st.z);
+                const len = speed * st.z * H * 0.03;                   // about two frames' travel
+                g.lineStyle(r * 1.4, col, starA * (0.35 + 0.65 * st.z));
+                if (len > r) g.lineBetween(x, y - len, x, y);
+                else { g.fillStyle(col, starA * (0.35 + 0.65 * st.z)); g.fillCircle(x, y, r); }
+            }
+        }
+
+        // CLOUDS: a flat base and a few puffs, drifting sideways; at their own
+        // altitudes, so a climb sweeps them down past the view.
+        const C = S.CLOUDS || {}, cw = (C.SIZE || 150) * sc;
+        for (const c of W.clouds) {
+            c.x += c.v * (C.DRIFT || 0.01) * dt;
+            if (c.x > 1.2) c.x -= 1.4; else if (c.x < -0.2) c.x += 1.4;
+            const y = B.y + H - (c.alt - alt) * H, w = cw * c.s;
+            if (y < B.y - w || y > B.y + H + w) continue;
+            const x = B.x + c.x * B.width;
+            g.fillStyle(hexColor(C.SHADE || '#D6E4F0'), C.ALPHA || 0.9);
+            g.fillEllipse(x, y + w * 0.08, w * 1.5, w * 0.4);
+            g.fillStyle(hexColor(C.COLOR || '#FFFFFF'), C.ALPHA || 0.9);
+            for (const [dx, dy, r] of [[-0.45, -0.02, 0.24], [-0.15, -0.16, 0.32], [0.2, -0.12, 0.28], [0.48, 0, 0.2]])
+                g.fillCircle(x + dx * w, y + dy * w, r * w);
+            g.fillEllipse(x, y, w * 1.4, w * 0.32);
+        }
+
+        // THE EARTH: the top of a great sphere, with a thin bright haze of air
+        // round its rim. It sinks away as the view climbs.
+        // AT REST THE SPRINGS STAND ON IT: the ground meets the outer springs'
+        // base plates SEAT design px below their face (the middle one, on the
+        // crown, sinks in a touch).
+        const E = S.EARTH || {}, G = this.springGeo;
+        const R = B.width * (E.RADIUS || 1.6), ex = B.x + B.width / 2;
+        let rest = B.y + H * (E.TOP || 0.78);
+        if (G) {
+            const dx = Math.max(...G.xs.map((x) => Math.abs(x - ex)));
+            rest = G.baseY + (E.SEAT !== undefined ? E.SEAT : 24) * G.k - (R - Math.sqrt(Math.max(0, R * R - dx * dx)));
+        }
+        const eTop = rest + alt * H;
+        if (eTop < B.y + H + 40 * sc) this._drawEarth(g, ex, eTop + R, R, B.width, sc);
+    }
+
+    // THE PLANET, as seen from just above it: a blue ocean with continents and
+    // a band of air glowing round the rim; and on its crown the springs'
+    // island — grass over brown soil, shown cut away like a slice of ground,
+    // tapering to the shore at both ends. (cx, cy) is the centre, R the radius;
+    // everything sits inside the circle, so nothing needs clipping.
+    _drawEarth(g, cx, cy, R, w, sc) {
+        const E = (CONFIG.SKY || {}).EARTH || {};
+        const pt = (a, r) => [cx + r * Math.sin(a), cy - r * Math.cos(a)];   // a = radians from the crown
+        const fill = (pts, color, alpha) => {
+            g.fillStyle(hexColor(color), alpha);
+            g.beginPath();
+            g.moveTo(pts[0][0], pts[0][1]);
+            for (let j = 1; j < pts.length; j++) g.lineTo(pts[j][0], pts[j][1]);
+            g.closePath();
+            g.fillPath();
+        };
+
+        // AIR: a few soft rings, thinning outward.
+        const haze = (E.HAZE_PX || 14) * sc;
+        for (let n = 3; n >= 1; n--) {
+            g.fillStyle(hexColor(E.HAZE || '#BFE9FF'), 0.18 + 0.12 * (3 - n));
+            g.fillCircle(cx, cy, R + haze * n);
+        }
+        g.fillStyle(hexColor(E.OCEAN || '#2E7CC4'), 1);
+        g.fillCircle(cx, cy, R);
+        g.fillStyle(hexColor(E.OCEAN_DEEP || '#225FA0'), 1);
+        g.fillCircle(cx, cy, R - 0.08 * w);
+
+        // CONTINENTS: [angle from the crown, depth below the surface, size],
+        // depth and size × the half's width. A sandy blob with green over most
+        // of it; each stays clear of the rim.
+        for (const [a, d, r] of E.CONTINENTS || []) {
+            const [x, y] = pt(a, R - d * w), s = r * w;
+            const blob = (k, dx, dy) => g.fillCircle(x + dx * s, y + dy * s, k * s);
+            g.fillStyle(hexColor(E.SAND || '#D9C48A'), 1);
+            blob(0.75, -0.55, 0.1); blob(0.95, 0, 0); blob(0.7, 0.6, -0.15); blob(0.55, 0.15, 0.7);
+            g.fillStyle(hexColor(E.LAND || '#5DAA4C'), 1);
+            blob(0.6, -0.5, 0.05); blob(0.82, 0, -0.05); blob(0.55, 0.55, -0.15); blob(0.4, 0.15, 0.6);
+        }
+        // Wisps of cloud over the ocean.
+        g.fillStyle(0xffffff, 0.35);
+        for (const [a, d, len] of [[-0.2, 0.2, 0.22], [0.12, 0.38, 0.28], [-0.05, 0.6, 0.2]]) {
+            const [x, y] = pt(a, R - d * w);
+            g.fillEllipse(x, y, len * w, 0.025 * w);
+        }
+
+        // THE ISLAND: lens-shaped layers sharing the surface as their top edge,
+        // each its own depth at the middle and tapering to nothing at the shore.
+        const half = Math.asin(Math.min(1, (E.ISLAND || 0.46) * w / R));
+        const N = 48;
+        const lens = (depth, color, grow) => {
+            const a0 = half * (1 + grow), pts = [];
+            for (let j = 0; j <= N; j++) pts.push(pt(-a0 + 2 * a0 * j / N, R + (grow ? 1.5 * sc : 0)));
+            for (let j = N; j >= 0; j--) {
+                const u = j / N, taper = Math.pow(Math.sin(Math.PI * u), 0.55);
+                pts.push(pt(-a0 + 2 * a0 * u, R - depth * taper));
+            }
+            fill(pts, color, 1);
+        };
+        lens((E.SAND_PX || 26) * sc, E.SAND || '#D9C48A', 0.06);          // a beach just past the grass
+        lens((E.DEEP_PX || 90) * sc, E.SOIL_DEEP || '#6B4A2F', 0);
+        lens((E.SOIL_PX || 48) * sc, E.SOIL || '#8D6339', 0);
+        lens((E.GRASS_PX || 16) * sc, E.GRASS || '#5DBB4A', 0);
+        // Pebbles in the soil.
+        g.fillStyle(hexColor(E.SOIL_DEEP || '#6B4A2F'), 1);
+        for (const [u, d, r] of [[-0.7, 30, 4], [-0.35, 62, 5], [0.05, 38, 3.5], [0.4, 70, 4.5], [0.72, 34, 3.5], [-0.05, 75, 3]]) {
+            const [x, y] = pt(u * half, R - d * sc);
+            g.fillCircle(x, y, r * sc);
+        }
+        // Lit grass edge and darker tufts along the surface.
+        g.lineStyle(Math.max(1, 4 * sc), hexColor(E.GRASS_LIGHT || '#8EDB6A'), 1);
+        g.beginPath();
+        for (let j = 0; j <= N; j++) {
+            const [x, y] = pt(-half * 0.92 + 1.84 * half * j / N, R - 1.5 * sc);
+            if (j === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.strokePath();
+        const tuftH = (E.TUFT_PX || 10) * sc, tufts = E.TUFTS || 18;
+        for (let n = 0; n < tufts; n++) {
+            const a = -half * 0.88 + 1.76 * half * (n + 0.5) / tufts + ((n * 37) % 7 - 3) * 0.002;
+            const h = tuftH * (0.7 + 0.3 * ((n * 53) % 5) / 4);
+            const pts = [pt(a - 0.008, R - 1), pt(a - 0.004, R + h), pt(a, R + h * 0.4), pt(a + 0.004, R + h * 0.9), pt(a + 0.008, R - 1)];
+            fill(pts, E.GRASS_DARK || '#3F8F35', 1);
+        }
+    }
+
+    // ── THE FLIGHT ───────────────────────────────────────────────────────────
+
+    // Called on RELEASE, with the level that was just completed. The springs
+    // fling their payloads off the top; CUT_MS later the half cuts to the
+    // flight: the same three, climbing through the clouds into the stars.
+    _startFlight(level) {
+        const F = (CONFIG.SKY || {}).FLIGHT || {};
+        if (F.ENABLED === false) return;
+        const L = this.layoutConfig, B = L.partB, G = this.springGeo;
+        const key = payloadKey(level);
+        const g = this.flightGfx;
+        const f = this.flight = { t: 0, alt: F.START_ALT || 0.4, speed: 0, imgs: [], out: false, alpha: 0 };
+        this.tweens.add({ targets: f, alpha: 1, delay: F.CUT_MS || 450, duration: F.FADE_MS || 250 });
+        if (!this.textures.exists(key) || !G) return;
+        const size = ((CONFIG.PAYLOAD || {}).SIZE || 120) * G.k * (F.SCALE || 1.3);
+        G.xs.forEach((x, i) => {
+            const img = this.add.image(x, B.y + B.height + size, key).setOrigin(0.5).setDepth((F.DEPTH || 40) + 1).setAlpha(0);
+            img.setScale(size / Math.max(img.frame.width, img.frame.height));
+            img.by = img.y;
+            // Up into view from below, as the camera catches them.
+            this.tweens.add({ targets: img, by: B.y + B.height * (F.CRUISE_Y || 0.45) + (i - 1) * size * 0.15,
+                alpha: 1, delay: (F.CUT_MS || 450) + 80 * i, duration: F.ENTER_MS || 600, ease: 'Cubic.Out' });
+            f.imgs.push(img);
+        });
+        if (g) g.setVisible(true).setAlpha(0);
+    }
+
+    // Each frame: the climb speeds up (ACCEL_MS to full SPEED), the payloads
+    // bob, and at the end they shoot off the top as the half fades back.
+    _updateFlight(dt) {
+        const f = this.flight, g = this.flightGfx;
+        if (!f) { if (g && g.visible) g.clear().setVisible(false); return; }
+        const F = (CONFIG.SKY || {}).FLIGHT || {};
+        const B = this.layoutConfig.partB, sc = this.layoutConfig.platformScale;
+        const total = F.MS || 3200, outMs = F.OUT_MS || 450;
+        f.t += dt * 1000;
+        const ramp = Math.min(1, f.t / (F.ACCEL_MS || 1400));
+        f.speed = (F.SPEED || 3.5) * ramp * ramp;
+        f.alt += f.speed * dt;
+        if (g) {
+            g.clear().setAlpha(f.alpha);
+            this._drawSky(g, f.alt, f.speed, dt);
+        }
+        f.imgs.forEach((img, i) => {
+            if (!img.scene) return;
+            const ph = f.t * 0.006 + i * 2.1;
+            img.setPosition(img.x, img.by + Math.sin(ph) * 5 * sc);
+            if (!f.out) img.setAngle(Math.sin(ph * 0.7) * 6);
+        });
+        if (!f.out && f.t >= total - outMs) {
+            f.out = true;
+            for (const img of f.imgs) this.tweens.add({ targets: img, by: B.y - B.height * 0.6,
+                scale: img.scale * 0.6, duration: outMs, ease: 'Cubic.In' });
+            this.tweens.add({ targets: f, alpha: 0, delay: outMs * 0.5, duration: outMs * 0.5 });
+        }
+        if (f.t >= total + 50) this._endFlight();
+    }
+
+    // Back at the springs: the next level's payloads drop onto them.
+    _endFlight() {
+        const f = this.flight;
+        if (!f) return;
+        this.tweens.killTweensOf(f);
+        for (const img of f.imgs) { this.tweens.killTweensOf(img); img.destroy(); }
+        this.flight = null;
+        if (this.flightGfx) this.flightGfx.clear().setVisible(false);
+        this.springs.forEach((s, i) => {
+            if (!this.payloads[i] && s.phase !== 'releasing') this.payloads[i] = this._makePayload(i, true);
+        });
     }
 
     _drawSprings() {
@@ -1622,7 +1956,9 @@ class GameScene extends Phaser.Scene {
             g.fillStyle(hexColor(sc.DUST_COLOR || '#CFD8DC'), 0.5 * (1 - k));
             g.fillCircle(d.x, d.y, d.r * (1 + k));
         }
-        if (this.releaseBtn) this.releaseBtn.setVisible(this.springs.every(s => s.phase === 'ready'));
+        // ALL FULL: count down and launch on its own.
+        if (!this.countdown && !this.flight && !this.isWatchingAd && this.springs.every(s => s.phase === 'ready'))
+            this._startCountdown();
     }
 
     _drawSpring(g, idx, s) {
@@ -1740,7 +2076,43 @@ class GameScene extends Phaser.Scene {
             stroke(n, lw, front, 1, 0);
             stroke(n, Math.max(1, lw * 0.3), hexColor(sc.HIGHLIGHT_COLOR || '#FFFFFF'), 0.75, -lw * 0.22);
         }
+        // PULL ARROWS, DOWN BOTH SIDES OF THE COIL: down-pointing chevrons
+        // stacked from the top plate's level toward the base, all moving one
+        // place down and fading — the top plate drawn down from below (see
+        // _pushArrow).
+        const A = sc.ARROW || {};
+        if (s.phase === 'compressing' && s.arrow !== undefined && s.arrow < 1) {
+            const p = s.arrow;
+            const slide = 1 - Math.pow(1 - p, 3);                       // Cubic.Out
+            const alpha = p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85;
+            const hw = (A.W || 36) / 2 * k, ch = (A.H || 22) * k, th = (A.THICK || 9) * k;
+            const count = A.COUNT || 4, pad = (A.GAP || 8) * k;
+            const off = w / 2 + lw + (A.SIDE_GAP || 12) * k + hw;      // centre of each column from the axis
+            const top = topAxis + tilt + pad, room = (baseAxis - tilt - pad) - top - ch;
+            const step = Math.max(0, Math.min((A.SPACING || 26) * k, room / count));
+            const fill = hexColor(A.COLOR || '#FFD54F');
+            for (const x of [cx - off, cx + off]) for (let n = 0; n < count; n++) {
+                const y0 = top + (n + slide) * step;
+                const fade = 1 - 0.7 * (count - 1 - n) / count;     // the lowest, leading one strongest
+                const pts = [[x - hw, y0], [x, y0 + ch - th], [x + hw, y0],
+                             [x + hw, y0 + th], [x, y0 + ch], [x - hw, y0 + th]];
+                g.fillStyle(fill, alpha * fade);
+                g.lineStyle(Math.max(1, 3 * k), outlineC, alpha * fade);
+                g.beginPath();
+                g.moveTo(pts[0][0], pts[0][1]);
+                for (let j = 1; j < pts.length; j++) g.lineTo(pts[j][0], pts[j][1]);
+                g.closePath();
+                g.fillPath();
+                g.strokePath();
+            }
+        }
+
         disc(topY + shiver - plateH, w / 2 + 10 * k);
+
+        // THE PAYLOAD rides the top plate, its bottom sunk a little into the face.
+        const pay = this.payloads && this.payloads[idx];
+        const seatY = topY + shiver - plateH + ryTop * ((CONFIG.PAYLOAD || {}).SINK || 0.4);
+        if (pay && pay.scene) pay.setPosition(cx, seatY + (pay.dropOff || 0));
     }
 
 

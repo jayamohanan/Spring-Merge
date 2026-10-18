@@ -612,11 +612,12 @@ var CONFIG = {
 
         // ── Placement in the half ──
         BOTTOM_PAD:    30,       // px @ design: half's bottom edge → slot's bottom edge
-        TOP_PAD:       24,       // px @ design: half's top edge → top of the spring's label
-        BASE_GAP:      14,       // px @ design: slot's rate label → base plate
+        TOP_PAD:       24,       // px @ design: half's top edge → top of the spring
+        BASE_GAP:      14,       // px @ design: slot's rate label → spring's figure (under the base plate)
         COL_FRAC:      0.62,     // the slot square's share of its column's width, capped at a grid cell
         SLOT_H_FRAC:   0.22,     // …and of the half's height
         MAX_SCALE:     1,        // the spring never draws bigger than its design size
+        SIZE:          0.8,      // the spring's size, fraction of the most that fits (its base stays put)
 
         REST_HEIGHT:  520,       // coil height when relaxed, px
         MIN_HEIGHT:   110,       // coil height when fully compressed, px
@@ -657,9 +658,81 @@ var CONFIG = {
         RATE_SUFFIX: '',         // after each slot's figure (none: a bare number)
         // THE PIGGY'S FIGURE PULSES on each tick, as its spring steps.
         RATE_PULSE: { ENABLED: true, SCALE: 1.2, MS: 200 },
-        // The RELEASE button, centred in the half over the squeezed springs.
-        RELEASE_BTN: { TEXT: 'RELEASE', SIZE: 56, COLOR: '#FFFFFF', BG: '#E53935',
-                       PAD_X: 40, PAD_Y: 16, Y_FRAC: 0.45 },   // px @ design; Y_FRAC of the rest height above the base
+        // PULL ARROWS: on each tick, a column of down-pointing chevrons down each
+        // side of the coil slides one place toward the base and fades — the top
+        // plate drawn down from below. Sizes px @ design (× spring scale);
+        // SPACING shrinks to fit a squeezed coil, GAP is the clearance from the
+        // coil's ends, SIDE_GAP from the wire to a column.
+        ARROW: { ENABLED: true, MS: 450, COUNT: 4, COLOR: '#FFD54F',
+                 W: 36, H: 22, THICK: 9, SPACING: 26, GAP: 8, SIDE_GAP: 12 },  // MS: whole slide + fade, ms
+        // ALL FULL → a 3-2-1 countdown, centred in the half over the springs, then
+        // they launch on their own. Each number pops in from POP × size.
+        COUNTDOWN: { FROM: 3, STEP_MS: 800,   // ms per number
+                     SIZE: 120, COLOR: '#FFFFFF', STROKE: '#E53935', STROKE_W: 10, POP: 1.6,  // px @ design
+                     Y_FRAC: 0.45 },          // fraction of the rest height above the base
+    },
+
+    // ── THE PAYLOADS ─────────────────────────────────────────────────────────
+    // Each level, three copies of one item ride the springs' top plates; the
+    // RELEASE launches them up off the screen and the next level's drop in.
+    PAYLOAD: {
+        FILES: ['astronaut', 'flag', 'dome', 'solar-panels', 'water-tower'],  // graphics/payload/<name>.webp, level 1, 2, … (loops)
+        SIZE:      120,          // longest side, px @ spring design (× the spring's scale)
+        SINK:      0.4,          // how far its bottom sits into the top plate's face, fraction of the face's half-height
+        DEPTH:     4,            // over the springs (2) and the slots (3), under the piggies
+        LAUNCH_MS: 450,          // launch tween, ms — it leaves the screen early on, fast
+        LAUNCH_SPIN: 25,         // up to this much turn on the way out, degrees
+        DROP_MS:   500,          // the next one dropping onto its plate, ms
+        DROP_PX:   120,          // …from this far above, px @ spring design
+    },
+
+    // ── THE SKY AND THE FLIGHT ───────────────────────────────────────────────
+    // The spring half's ground is the top of the Earth with blue sky and clouds
+    // over it. On RELEASE the half cuts to the FLIGHT: the three payloads in
+    // view, climbing ever faster through the clouds, the sky going dark and
+    // the stars streaking past, then it fades back to the springs.
+    // Altitudes are in half-heights above the ground.
+    SKY: {
+        SKY_TOP:   '#3A8DDE',    // blue sky, top of the half
+        SKY_BOT:   '#BFE6FF',    // …at the horizon
+        SPACE_TOP: '#05071A',    // space, top
+        SPACE_BOT: '#151040',    // …bottom
+        SPACE_ALT: 2.5,          // altitude where the sky is fully space
+        STARS:     80,
+        STAR_COLOR: '#FFFFFF',
+        STAR_SIZE: 2.2,          // radius of the nearest stars, px @ design (far ones smaller)
+        EARTH: { SEAT: 24,       // the ground meets the springs' base plates this far below their face, px @ spring design
+                 TOP: 0.78,      // (only before the springs exist) top of the Earth, fraction of the half's height
+                 RADIUS: 1.6,    // sphere radius, × the half's width
+                 HAZE: '#BFE9FF', HAZE_PX: 14,                       // air glow round the rim: three rings this wide (px @ design)
+                 OCEAN: '#2E7CC4', OCEAN_DEEP: '#225FA0',
+                 LAND: '#5DAA4C', SAND: '#D9C48A',
+                 // Continents: [angle from the crown (radians), depth below the surface, size], × the half's width.
+                 CONTINENTS: [[-0.27, 0.12, 0.07], [0.27, 0.16, 0.08], [0.02, 0.30, 0.09], [-0.16, 0.48, 0.08], [0.17, 0.62, 0.1]],
+                 // The springs' island on the crown: half its width (× the half's width), and its layers'
+                 // depths at the middle, px @ design.
+                 ISLAND: 0.46, GRASS_PX: 16, SOIL_PX: 48, DEEP_PX: 90, SAND_PX: 26,
+                 GRASS: '#5DBB4A', GRASS_LIGHT: '#8EDB6A', GRASS_DARK: '#3F8F35',
+                 SOIL: '#8D6339', SOIL_DEEP: '#6B4A2F',
+                 TUFTS: 18, TUFT_PX: 10 },                          // grass tufts along the top: how many, how tall (px @ design)
+        CLOUDS: { COUNT: 9, FROM: 0.35, TO: 2.4,  // how many, spread between these altitudes
+                  SIZE: 150,     // px @ design (each one 0.6..1.4 of it)
+                  DRIFT: 0.01,   // sideways drift, fraction of the half's width per second
+                  COLOR: '#FFFFFF', SHADE: '#D6E4F0', ALPHA: 0.9 },
+        FLIGHT: {
+            ENABLED:   true,
+            DEPTH:     40,       // over the springs, slots and slot piggies; under coins and dragging
+            CUT_MS:    450,      // release → the cut to the flight (the springs' throw plays first), ms
+            FADE_MS:   250,      // the cut's fade in, ms
+            START_ALT: 0.4,      // altitude it opens at
+            SPEED:     7,        // full climb, half-heights per second
+            ACCEL_MS:  1400,     // time to reach it, ms
+            MS:        3200,     // whole flight from release, ms
+            OUT_MS:    450,      // at its end the payloads shoot off the top and it fades out, ms
+            SCALE:     1.3,      // payload size in flight, × its size on the spring
+            CRUISE_Y:  0.45,     // where they hold, fraction of the half's height from its top
+            ENTER_MS:  600,      // rising into view after the cut, ms
+        },
     },
 
     // ── THE PIGGY STEERS ─────────────────────────────────────────────────────
