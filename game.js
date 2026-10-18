@@ -639,6 +639,7 @@ class GameScene extends Phaser.Scene {
         gone(this.springGfx);
         gone(this.skyGfx);
         gone(this.flightGfx);
+        gone(this.flightBgGfx);
         for (const p of this.payloads || []) gone(p);
         this.payloads = [];
         for (const t of this.springLabels) gone(t);
@@ -1084,7 +1085,13 @@ class GameScene extends Phaser.Scene {
 
         this.springGfx = this.add.graphics().setDepth(v(SP.DEPTH, 2));
         this.skyGfx    = this.add.graphics().setDepth(1);
+        // THE FLIGHT, twice: over the whole stage under the grid (flightBgGfx),
+        // so the grid's ground turns to space too; and over the spring half
+        // only, above the springs and slots (flightGfx, seen only through the
+        // flight's own camera — see _startFlight).
+        this.flightBgGfx = this.add.graphics().setDepth(1.5).setVisible(false);
         this.flightGfx = this.add.graphics().setDepth(((CONFIG.SKY || {}).FLIGHT || {}).DEPTH || 40).setVisible(false);
+        this.cameras.main.ignore(this.flightGfx);
         // A launch in flight is never relaid (it holds the relayout with its
         // tweens), so every spring not letting go gets its payload back here.
         this.payloads = this.springs.map((s, i) => (s.phase === 'releasing' ? null : this._makePayload(i, false)));
@@ -1656,7 +1663,8 @@ class GameScene extends Phaser.Scene {
         this._springT = (this._springT || 0) + delta;
         this._updateDust(delta);
         const dt = Math.min(delta, 50) / 1000;
-        if (this.skyGfx && this.skyGfx.scene) { this.skyGfx.clear(); this._drawSky(this.skyGfx, 0, 0, dt); }
+        this._stepSky(this.flight ? this.flight.speed : 0, dt);
+        if (this.skyGfx && this.skyGfx.scene) { this.skyGfx.clear(); this._drawSky(this.skyGfx, 0, 0); }
         this._updateFlight(dt);
         this._drawSprings();
     }
@@ -1706,7 +1714,8 @@ class GameScene extends Phaser.Scene {
     // the top of the Earth at the bottom, blue sky and clouds over it, and
     // higher up the sky goes dark and the stars come out. The spring half sits
     // at alt 0 (skyGfx, under the springs). A launch cuts to the FLIGHT — the
-    // same world drawn over the whole half (flightGfx), climbing ever faster
+    // same world drawn over the whole half (flightGfx) and behind the grid
+    // (flightBgGfx), climbing ever faster
     // with the payloads in view, until it fades back to the springs.
 
     _skyWorld() {
@@ -1721,17 +1730,35 @@ class GameScene extends Phaser.Scene {
         return (this._sky = { clouds, stars });
     }
 
-    // The world at `alt`, over partB, into g. `speed` is how fast it is
-    // climbing (half-heights per second): the stars scroll by it, and streak.
-    _drawSky(g, alt, speed, dt) {
+    // Each frame, once: the clouds drift, and the stars scroll down at the
+    // climb's `speed` (half-heights per second).
+    _stepSky(speed, dt) {
+        const W = this._skyWorld(), C = (CONFIG.SKY || {}).CLOUDS || {};
+        const k = this.layoutConfig.partB.height / Math.max(1, this.scale.height);   // half-heights → stage heights
+        for (const st of W.stars) {
+            st.y += speed * k * st.z * dt;
+            if (st.y > 1) { st.y -= Math.floor(st.y); st.x = Math.random(); }
+        }
+        for (const c of W.clouds) {
+            c.x += c.v * (C.DRIFT || 0.01) * dt;
+            if (c.x > 1.2) c.x -= 1.4; else if (c.x < -0.2) c.x += 1.4;
+        }
+    }
+
+    // The world at `alt` into g, across THE WHOLE STAGE — the grid's side
+    // too, so the two halves read as one sky. Altitudes are measured in the
+    // spring half's height, and the Earth is centred under the springs.
+    // `speed` stretches the stars into streaks.
+    _drawSky(g, alt, speed) {
         const S = CONFIG.SKY || {}, W = this._skyWorld();
         const L = this.layoutConfig, B = L.partB, H = B.height, sc = L.platformScale;
+        const SW = this.scale.width, SH = this.scale.height;
         const clamp = (x) => Math.max(0, Math.min(1, x));
         const dark = clamp(alt / (S.SPACE_ALT || 2.5));                // 0 blue sky .. 1 space
         const top = lerpColor(hexColor(S.SKY_TOP || '#3A8DDE'), hexColor(S.SPACE_TOP || '#05071A'), clamp(dark * 1.4));
         const bot = lerpColor(hexColor(S.SKY_BOT || '#BFE6FF'), hexColor(S.SPACE_BOT || '#151040'), dark);
         g.fillGradientStyle(top, top, bot, bot, 1);
-        g.fillRect(B.x, B.y, B.width, H);
+        g.fillRect(0, 0, SW, SH);
 
         // STARS, in screen space: they fade in as the sky darkens and scroll
         // down at the climb's own speed.
@@ -1739,9 +1766,7 @@ class GameScene extends Phaser.Scene {
         if (starA > 0) {
             const col = hexColor(S.STAR_COLOR || '#FFFFFF');
             for (const st of W.stars) {
-                st.y += speed * st.z * dt;
-                if (st.y > 1) { st.y -= Math.floor(st.y); st.x = Math.random(); }
-                const x = B.x + st.x * B.width, y = B.y + st.y * H;
+                const x = st.x * SW, y = st.y * SH;
                 const r = Math.max(0.5, (S.STAR_SIZE || 2.2) * sc * st.z);
                 const len = speed * st.z * H * 0.03;                   // about two frames' travel
                 g.lineStyle(r * 1.4, col, starA * (0.35 + 0.65 * st.z));
@@ -1754,11 +1779,9 @@ class GameScene extends Phaser.Scene {
         // altitudes, so a climb sweeps them down past the view.
         const C = S.CLOUDS || {}, cw = (C.SIZE || 150) * sc;
         for (const c of W.clouds) {
-            c.x += c.v * (C.DRIFT || 0.01) * dt;
-            if (c.x > 1.2) c.x -= 1.4; else if (c.x < -0.2) c.x += 1.4;
             const y = B.y + H - (c.alt - alt) * H, w = cw * c.s;
-            if (y < B.y - w || y > B.y + H + w) continue;
-            const x = B.x + c.x * B.width;
+            if (y < -w || y > SH + w) continue;
+            const x = c.x * SW;
             g.fillStyle(hexColor(C.SHADE || '#D6E4F0'), C.ALPHA || 0.9);
             g.fillEllipse(x, y + w * 0.08, w * 1.5, w * 0.4);
             g.fillStyle(hexColor(C.COLOR || '#FFFFFF'), C.ALPHA || 0.9);
@@ -1780,7 +1803,7 @@ class GameScene extends Phaser.Scene {
             rest = G.baseY + (E.SEAT !== undefined ? E.SEAT : 24) * G.k - (R - Math.sqrt(Math.max(0, R * R - dx * dx)));
         }
         const eTop = rest + alt * H;
-        if (eTop < B.y + H + 40 * sc) this._drawEarth(g, ex, eTop + R, R, B.width, sc);
+        if (eTop < SH + 40 * sc) this._drawEarth(g, ex, eTop + R, R, B.width, sc);
     }
 
     // THE PLANET, as seen from just above it: a blue ocean with continents and
@@ -1882,6 +1905,12 @@ class GameScene extends Phaser.Scene {
         const g = this.flightGfx;
         const f = this.flight = { t: 0, alt: F.START_ALT || 0.4, speed: 0, imgs: [], out: false, alpha: 0 };
         this.tweens.add({ targets: f, alpha: 1, delay: F.CUT_MS || 450, duration: F.FADE_MS || 250 });
+        // ITS OWN CAMERA, its viewport the spring half: what it draws cannot
+        // reach the grid, whatever the renderer (a mask could, on some mobile
+        // GPUs). The main camera never draws the flight's layer; this one draws
+        // only that and the top layers (_flightCamFilter).
+        f.cam = this.cameras.add(B.x, B.y, B.width, B.height).setScroll(B.x, B.y);
+        this._flightCamFilter();
         if (!this.textures.exists(key) || !G) return;
         const size = ((CONFIG.PAYLOAD || {}).SIZE || 120) * G.k * (F.SCALE || 1.3);
         G.xs.forEach((x, i) => {
@@ -1892,15 +1921,20 @@ class GameScene extends Phaser.Scene {
             this.tweens.add({ targets: img, by: B.y + B.height * (F.CRUISE_Y || 0.45) + (i - 1) * size * 0.15,
                 alpha: 1, delay: (F.CUT_MS || 450) + 80 * i, duration: F.ENTER_MS || 600, ease: 'Cubic.Out' });
             f.imgs.push(img);
+            this.cameras.main.ignore(img);
         });
         if (g) g.setVisible(true).setAlpha(0);
+        if (this.flightBgGfx) this.flightBgGfx.setVisible(true).setAlpha(0);
     }
 
     // Each frame: the climb speeds up (ACCEL_MS to full SPEED), the payloads
     // bob, and at the end they shoot off the top as the half fades back.
     _updateFlight(dt) {
-        const f = this.flight, g = this.flightGfx;
-        if (!f) { if (g && g.visible) g.clear().setVisible(false); return; }
+        const f = this.flight, g = this.flightGfx, bg = this.flightBgGfx;
+        if (!f) {
+            for (const x of [g, bg]) if (x && x.visible) x.clear().setVisible(false);
+            return;
+        }
         const F = (CONFIG.SKY || {}).FLIGHT || {};
         const B = this.layoutConfig.partB, sc = this.layoutConfig.platformScale;
         const total = F.MS || 3200, outMs = F.OUT_MS || 450;
@@ -1908,9 +1942,10 @@ class GameScene extends Phaser.Scene {
         const ramp = Math.min(1, f.t / (F.ACCEL_MS || 1400));
         f.speed = (F.SPEED || 3.5) * ramp * ramp;
         f.alt += f.speed * dt;
-        if (g) {
-            g.clear().setAlpha(f.alpha);
-            this._drawSky(g, f.alt, f.speed, dt);
+        this._flightCamFilter();
+        for (const x of [bg, g]) if (x && x.scene) {
+            x.clear().setAlpha(f.alpha);
+            this._drawSky(x, f.alt, f.speed);
         }
         f.imgs.forEach((img, i) => {
             if (!img.scene) return;
@@ -1927,6 +1962,19 @@ class GameScene extends Phaser.Scene {
         if (f.t >= total + 50) this._endFlight();
     }
 
+    // What the flight's camera draws, every frame (things come and go): the
+    // flight's layer and payloads, and anything at depth 100 or more — coins,
+    // a piggy being dragged, pointers — so those still show over the flight.
+    // Everything else under it (springs, slots, slot piggies) it hides.
+    _flightCamFilter() {
+        const f = this.flight, cam = f && f.cam;
+        if (!cam) return;
+        for (const o of this.children.list) {
+            if (o === this.flightGfx || f.imgs.includes(o) || o.depth >= 100) o.cameraFilter &= ~cam.id;
+            else o.cameraFilter |= cam.id;
+        }
+    }
+
     // Back at the springs: the next level's payloads drop onto them.
     _endFlight() {
         const f = this.flight;
@@ -1934,7 +1982,9 @@ class GameScene extends Phaser.Scene {
         this.tweens.killTweensOf(f);
         for (const img of f.imgs) { this.tweens.killTweensOf(img); img.destroy(); }
         this.flight = null;
+        if (f.cam) this.cameras.remove(f.cam);
         if (this.flightGfx) this.flightGfx.clear().setVisible(false);
+        if (this.flightBgGfx) this.flightBgGfx.clear().setVisible(false);
         this.springs.forEach((s, i) => {
             if (!this.payloads[i] && s.phase !== 'releasing') this.payloads[i] = this._makePayload(i, true);
         });
