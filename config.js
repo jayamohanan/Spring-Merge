@@ -677,7 +677,7 @@ var CONFIG = {
     // RELEASE launches them up off the screen and the next level's drop in.
     PAYLOAD: {
         FILES: ['astronaut', 'flag', 'dome', 'solar-panels', 'water-tower'],  // graphics/payload/<name>.webp, level 1, 2, … (loops)
-        SIZE:      120,          // longest side, px @ spring design (× the spring's scale)
+        SIZE:      240,          // longest side, px @ spring design (× the spring's scale)
         SINK:      0.4,          // how far its bottom sits into the top plate's face, fraction of the face's half-height
         DEPTH:     4,            // over the springs (2) and the slots (3), under the piggies
         LAUNCH_MS: 450,          // launch tween, ms — it leaves the screen early on, fast
@@ -722,8 +722,8 @@ var CONFIG = {
         FLIGHT: {
             ENABLED:   true,
             DEPTH:     40,       // over the springs, slots and slot piggies; under coins and dragging
-            CUT_MS:    450,      // release → the cut to the flight (the springs' throw plays first), ms
-            FADE_MS:   250,      // the cut's fade in, ms
+            CUT_MS:    150,      // release → the cut to the flight (the springs' throw plays first), ms
+            FADE_MS:   150,      // the cut's fade in, ms
             START_ALT: 0.4,      // altitude it opens at
             SPEED:     7,        // full climb, half-heights per second
             ACCEL_MS:  1400,     // time to reach it, ms
