@@ -1,7 +1,7 @@
 /**
  * ITEM DATA FILE
  *
- * The piggy driver's art, and what it's worth.
+ * The piggy's art, and what it's worth.
  *
  * AN ITEM IS TWO PICTURES: a piggy (graphics/piggy, 28 of them) with a
  * steering wheel (graphics/st_wheel, 90 of them) laid over it. The two are
@@ -14,7 +14,7 @@
  *   level 91+     the whole picture loops back to level 1's — see
  *                 getBatteryIconLevel in config.js
  *
- * DISTANCE VALUES BY LEVEL (CHARGE_PER_SECOND_BY_LEVEL) are SEPARATE from the
+ * PUSH VALUES BY LEVEL (CHARGE_PER_SECOND_BY_LEVEL) are SEPARATE from the
  * art on purpose: a level's picture can loop while its figure keeps climbing.
  */
 
@@ -34,7 +34,7 @@ var ITEM_ART = {
     WHEEL_AT: { x: 82, y: 61, size: 64 },
 };
 
-// DISTANCE PER SECOND (metres) a pig of each level covers while in a slot.
+// COMPRESSION PER SECOND (spring units) a pig of each level pushes while in a slot.
 // 12.5 × 1.5^(level − 1) up to level 31, then 2.5× the reference curve;
 // rounded to clean numbers, and never falling — two neighbouring levels can
 // share a figure where the curve rises slower than the clean steps do.
@@ -157,7 +157,7 @@ function itemPiggyIndex(iconLvl) {
 function itemPiggyPath(iconLvl) { return _itemFile(ITEM_ART.PIGGY, itemPiggyIndex(iconLvl)); }
 function itemWheelPath(iconLvl) { return _itemFile(ITEM_ART.WHEEL, iconLvl); }
 
-// Distance per second for a level.
+// Compression per second for a level.
 function getBatteryChargeValue(level) {
     return CHARGE_PER_SECOND_BY_LEVEL[level] || (level * 5); // Fallback for undefined levels
 }

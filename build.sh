@@ -33,13 +33,15 @@ mkdir -p "$OUT"
 #           thumbnails, uploaded on the dashboard), notes, Finder litter
 #   PATHS   from the project root — graphics/item (the old baked-together
 #           items) and graphics/crop are no longer loaded; the item art is
-#           graphics/piggy and graphics/st_wheel now
+#           graphics/piggy and graphics/st_wheel now. The old racing art
+#           (cars, rivals, the podium piggy) is no longer loaded either
 node - "$OUT" <<'EOF'
 const fs = require('fs'), path = require('path');
 const OUT = process.argv[2];
 const NAMES = new Set(['.git', '.github', '.gitignore', '.claude', '.DS_Store', 'build', 'build.sh',
                        'build.command', 'dev', 'store', 'tools', 'style', 'sounds', 'untitled folder']);
-const PATHS = new Set(['graphics/item', 'graphics/crop']);
+const PATHS = new Set(['graphics/item', 'graphics/crop', 'graphics/hero_car', 'graphics/villain',
+                       'graphics/villain_car', 'graphics/opponent', 'graphics/piggy_character']);
 const skip = (rel, name) => NAMES.has(name) || PATHS.has(rel) || name.startsWith('._') || name.endsWith('.md');
 let n = 0;
 (function copy(rel) {

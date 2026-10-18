@@ -32,9 +32,8 @@ function assetList() {
 }
 
 // ── SHARED ART ───────────────────────────────────────────────────────────────
-// Everything the game needs to start. Later rivals' heads and car designs are
-// fetched in the background as levels near (AssetManager.prefetchRivals /
-// prefetchCars), not listed here.
+// Everything the game needs to start. Later piggies are fetched in the
+// background (AssetManager.prefetchAhead / _startBatteryBackfill), not listed here.
 function sharedAssets() {
     const A = assetList();
 
@@ -57,19 +56,6 @@ function sharedAssets() {
     // Grain for the cell faces: neutral grey + blurred noise, blended over the
     // flat colour at bake time (see _makeCellTextures).
     A.image('cell_noise', 'graphics/ui/merge-grid/cell_noise.webp');
-    // The car: a right-facing body and the one tyre, used twice per car
-    // (see CONFIG.CAR / _makeCar).
-    A.image('car_body', 'graphics/hero_car/car_01.webp');
-    A.image('car_tyre', 'graphics/hero_car/car_tyre_01.webp');
-    // Its driver: the piggy in side view (CONFIG.CAR.DRIVER).
-    A.image('piggy_side', 'graphics/piggy_character/piggy_side.webp');
-    // THE FIRST RIVAL CAR DESIGN only (CONFIG.VILLAIN.CAR.CARS), body and
-    // tyre. The rest come in the background (AssetManager.prefetchCars).
-    const car1 = getawayCarFor(1);
-    if (car1) { A.image(getawayBodyKey(car1.n), car1.BODY); A.image(getawayTyreKey(car1.n), car1.TYRE); }
-    // THE FIRST RIVAL only. The rest come in the background once the game
-    // is running, a few levels ahead (AssetManager.prefetchRivals).
-    A.image(villainKey(villainIndexFor(1)), villainPath(villainIndexFor(1)));
     return A.list();
 }
 
@@ -77,26 +63,3 @@ function sharedAssets() {
 // `battery<iconLvl>`, so none of these can collide with it.
 function itemPiggyKey(iconLvl) { return `item_piggy_${itemPiggyIndex(iconLvl)}`; }
 function itemWheelKey(iconLvl) { return `item_wheel_${iconLvl}`; }
-
-// Which villain a level brings — FILES, looping — and the key it loads under.
-function villainIndexFor(level) {
-    const n = ((CONFIG.VILLAIN || {}).FILES || []).length || 1;
-    return ((Math.max(1, Math.floor(level)) - 1) % n) + 1;
-}
-function villainKey(i) { return `villain_${i}`; }
-// THE PLAYER'S PIGGY on the VS card and in the rank list — both only at a
-// level's end, so it loads in the background, not at startup.
-const PODIUM_PIGGY = { key: 'podium_piggy', url: 'graphics/piggy_character/piggy.webp' };
-function villainPath(i) {
-    const V = CONFIG.VILLAIN || {};
-    return (V.DIR || 'graphics/villain/') + (V.FILES || [])[i - 1];
-}
-function getawayBodyKey(i) { return `getaway_body_${i}`; }
-// The rival car design a level brings — CARS, looping — with its number n; null with none.
-function getawayCarFor(level) {
-    const cars = ((CONFIG.VILLAIN || {}).CAR || {}).CARS || [];
-    if (!cars.length) return null;
-    const n = (Math.max(1, Math.floor(level)) - 1) % cars.length + 1;
-    return Object.assign({ n }, cars[n - 1]);
-}
-function getawayTyreKey(i) { return `getaway_tyre_${i}`; }

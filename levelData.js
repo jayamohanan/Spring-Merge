@@ -1,27 +1,26 @@
 // ============================================================================
-// LEVEL DATA — how far each car is from its villain
+// LEVEL DATA — how strong each spring is, level by level
 // ============================================================================
-// One row per level, three figures to a row: the DISTANCE (metres) between
-// each lane's car and its villain, lanes top to bottom.
+// One row per level, three figures to a row: the STRENGTH of each spring
+// (units to fully compress it), springs left to right.
 //
-//   LEVEL_DISTANCES[0]  →  level 1  →  [top, middle, bottom]
+//   LEVEL_STRENGTHS[0]  →  level 1  →  [left, middle, right]
 //
-// Every tick the piggy driving a lane's car takes its distance per second
-// (CHARGE_PER_SECOND_BY_LEVEL) off that lane's figure — its damage, in effect.
-// At zero the villain is caught and pays out (levelPayoutsFor); when all three
-// are caught the next level begins.
+// Every tick the piggy in a slot pushes its figure per second
+// (CHARGE_PER_SECOND_BY_LEVEL) into the spring above it. When all three are
+// full, the release pays out (levelPayoutsFor) and the next level begins.
 //
-// THESE ARE BLUMGI MERGE'S MONSTER HP, the economy the game was paced
+// THESE ARE BLUMGI MERGE'S MONSTER HP, the economy the game is paced
 // against: 2.5× the reference balance, rounded to clean numbers. The biggest
-// figure is the bottom lane almost everywhere, so a player keeps their strongest
-// piggy there. Rows 7, 30 and 64 dip on purpose — rest levels.
+// figure is the right spring almost everywhere, so a player keeps their
+// strongest piggy there. Rows 7, 30 and 64 dip on purpose — rest levels.
 //
-// Past level 65 the last row is reused, and says so once (levelDistancesFor).
+// Past level 65 the last row is reused, and says so once (levelStrengthsFor).
 //
 // Loaded before config.js (see index.html).
 // ============================================================================
 
-var LEVEL_DISTANCES = [
+var LEVEL_STRENGTHS = [
     [            25,             35,             65],   // 1
     [            70,            120,            250],   // 2
     [           450,            600,           1200],   // 3
@@ -89,38 +88,38 @@ var LEVEL_DISTANCES = [
     [20000000000000, 25000000000000, 25000000000000],   // 65
 ];
 
-// WHAT EACH VILLAIN PAYS when caught, where it is not simply its own distance.
+// WHAT EACH SPRING PAYS on release, where it is not simply its own strength.
 // The opening levels' figures are too small to pay for more than a spawn or
 // two, so they pay a flat amount instead — enough to get the grid going. From
-// level 3 on a villain pays its distance (× CONFIG.VILLAIN.PAYOUT_MULT).
+// level 3 on a spring pays its strength (× CONFIG.SPRING.PAYOUT_MULT).
 var LEVEL_PAYOUT_OVERRIDES = {
     1: [250, 250, 250],
     2: [300, 300, 300],
 };
 
-// The three distances for a level, counted from 1. Out of range takes the last
+// The three strengths for a level, counted from 1. Out of range takes the last
 // row, and says so once: a level with no figures of its own is a content gap,
 // not something to fail on.
-var _levelDistancesWarned = false;
-function levelDistancesFor(level) {
-    const n = LEVEL_DISTANCES.length;
+var _levelStrengthsWarned = false;
+function levelStrengthsFor(level) {
+    const n = LEVEL_STRENGTHS.length;
     if (!(level >= 1)) level = 1;
     if (level > n) {
-        if (!_levelDistancesWarned) {
-            _levelDistancesWarned = true;
-            console.warn(`[levels] level ${level} is past the end of LEVEL_DISTANCES (${n} rows) — ` +
+        if (!_levelStrengthsWarned) {
+            _levelStrengthsWarned = true;
+            console.warn(`[levels] level ${level} is past the end of LEVEL_STRENGTHS (${n} rows) — ` +
                 `reusing row ${n}. Add rows to levelData.js.`);
         }
         level = n;
     }
-    return LEVEL_DISTANCES[level - 1];
+    return LEVEL_STRENGTHS[level - 1];
 }
 
-// The three villains' payouts for a level, top to bottom.
+// The three springs' payouts for a level, left to right.
 function levelPayoutsFor(level) {
     const o = LEVEL_PAYOUT_OVERRIDES[Math.floor(level)];
     if (o) return o.slice();
-    const mult = (typeof CONFIG !== 'undefined' && CONFIG.VILLAIN && CONFIG.VILLAIN.PAYOUT_MULT !== undefined)
-        ? CONFIG.VILLAIN.PAYOUT_MULT : 1;
-    return levelDistancesFor(level).map((d) => Math.max(1, Math.round(d * mult)));
+    const mult = (typeof CONFIG !== 'undefined' && CONFIG.SPRING && CONFIG.SPRING.PAYOUT_MULT !== undefined)
+        ? CONFIG.SPRING.PAYOUT_MULT : 1;
+    return levelStrengthsFor(level).map((d) => Math.max(1, Math.round(d * mult)));
 }

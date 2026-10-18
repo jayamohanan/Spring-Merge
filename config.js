@@ -6,20 +6,6 @@ function hexColor(cssColor) {
     return cssColor;
 }
 
-// ONE GETAWAY CAR DESIGN (CONFIG.VILLAIN.CAR.CARS): graphics/villain_car/
-// car_NN.webp and car_tyre_NN.webp, the body w x h, the tyre's
-// square size, each tyre's top-left [x, y] in the body, and the head (FACE).
-function getawayCarArt(n, w, h, tyre, rear, front, face) {
-    const nn = String(n).padStart(2, '0');
-    return {
-        BODY: `graphics/villain_car/car_${nn}.webp`,
-        TYRE: `graphics/villain_car/car_tyre_${nn}.webp`,
-        BODY_W: w, BODY_H: h, TYRE_SIZE: tyre,
-        TYRES: [{ x: rear[0], y: rear[1] }, { x: front[0], y: front[1] }],
-        FACE: face,
-    };
-}
-
 var CONFIG = {
     // Quotes are LOAD-BEARING. Phaser passes this straight into a canvas font
     // string, and a family with a space and a digit in it fails to parse
@@ -41,10 +27,10 @@ var CONFIG = {
     // Portrait stays a 50/50 top/bottom split — see calculateLayout().
     LAYOUT: {
         // THE UI HALF'S SHARE, and both numbers mean the same thing: what is
-        // left goes to the car area. An even split either way.
+        // left goes to the spring half. An even split either way.
         //
-        //   LANDSCAPE  UI on the LEFT, car area on the right — share of the WIDTH
-        //   PORTRAIT   UI at the BOTTOM, car area above — share of the HEIGHT
+        //   LANDSCAPE  UI on the LEFT, springs on the right — share of the WIDTH
+        //   PORTRAIT   UI at the BOTTOM, springs above — share of the HEIGHT
         LANDSCAPE_SPLIT: 0.5,
         // LANDSCAPE MERGE COLUMN (coin, grid, spawn button). On a half taller
         // than it needs, the column grows up to LANDSCAPE_GRID_GROW × its
@@ -109,13 +95,13 @@ var CONFIG = {
     BATTERY_START_LEVEL: 1,
     // Coins a new run starts with. Default 2500; raise it to debug later levels.
     START_COINS: 2500,
-    // THE ECONOMY. Coins come from catching villains — see levelData.js.
+    // THE ECONOMY. Coins come from releasing the springs — see levelData.js.
     ECONOMY: {
         SPAWN_COST_PER_LEVEL: 25,    // a spawn costs this × the spawn level
     },
 
      BACKGROUND: {
-        // MATCHED TO THE CAR AREA'S GROUND — partB (the car area) has no
+        // MATCHED TO THE SPRING HALF'S GROUND — partB (the springs) has no
         // fill of its own; it is simply the canvas's own backgroundColor
         // showing through (set on the Phaser game config in game.js). Keeping
         // this the same value makes the seam between the two halves disappear
@@ -559,7 +545,7 @@ var CONFIG = {
             SIZE:     34,       // px @ design scale. SMALLER than the single
                                 // flight's coins: there are many, they move, and
                                 // they are over the board
-            CAR_SHARE: 0.65,    // the share landing on the car area; the rest
+            AREA_SHARE: 0.65,   // the share landing on the spring half; the rest
                                 // fall over the panel and the grid
             AVOID_POINTER: 90,  // px @ design scale kept clear of a finger that
                                 // is mid-drag
@@ -582,11 +568,10 @@ var CONFIG = {
 
         // Platform stripes (top half) with battery slot on left, gadget on right
     // ── Battery slots ─────────────────────────────────────────────────────────
-    // Three slots in one battery-shaped case. In LANDSCAPE they sit in the UI
-    // half above the grid; in portrait they stay at the foot of the farm half.
-    // The slot SIZE is derived, not set: the three take the row's full width
-    // less the gaps, capped at ONE GRID CELL — a battery in a slot should look
-    // like a battery in a cell. (See createSlots / calculateLayout.)
+    // Three slots in a row along the spring half's bottom edge, one under
+    // each spring. The slot SIZE is derived, not set (SPRING.COL_FRAC /
+    // SLOT_H_FRAC), capped at ONE GRID CELL — a piggy in a slot should look
+    // like a piggy in a cell. (See createSprings.)
     PLATFORM: {
         SLOT_SIZE: 130,                // reference slot square (px) — the ratio
                                        // every slot-derived size is measured in
@@ -596,589 +581,85 @@ var CONFIG = {
                                        // ground inside it, so it reads as empty
                                        // rather than as another colour. Filled,
                                        // the slot takes its grained face as ever
-        CHARGE_RATE_ABOVE: true,       // the charge-rate figure OVER its slot,
-                                       // level with the distance lines over
-                                       // the cars; false puts it under
         CHARGE_RATE_GAP: 2,            // gap (px) between the slot's edge and
                                        // the charge-rate figure. The font's
                                        // own padding adds to this on screen
-        // THE DROP ZONE round each slot — bigger than the slot, centred on
-        // it, as far each way as the other. X and Y are shares of the most it
-        // may spread: across, to the edge of the race's half (the grid's side
-        // in landscape, the screen's in portrait); up and down, to halfway to
-        // the next slot (and never past the race's half), so no two overlap.
-        // 0 is the slot itself.
+        // THE DROP ZONE round each slot — bigger than the slot. X and Y are
+        // shares of the most it may spread: across, to the edges of the
+        // slot's column (so no two overlap); up, over its spring to the top
+        // of the half. 0 is the slot itself.
         DROP_ZONE: { X: 1, Y: 1 },
     },
 
-    // ── THE ROAD ─────────────────────────────────────────────────────────────
-    // The only scenery: one thin line per lane at its ground level — the line
-    // the tyres of both cars stand on — with small marks along it (dashes
-    // on the line, pebbles under it) and a few real BUMPS in it, all sliding
-    // BACKWARDS while the lane's car is driving, so the car reads as moving.
-    // They run in step with the tyres' spin (CAR.SPIN_*), starting, coasting
-    // and stopping with them. The tyres ride over the bumps and the body
-    // follows on its springs (SUSPENSION). In a finish the road is carried by
-    // the finish line (RACE).
-    ROAD: {
-        LINE_COLOR:  '#a3825c',
-        LINE_W:      3,          // px @ design
-        MARK_COLOR:  '#7e6044',
-        THICK:       12,         // px @ design: the road strip's depth under its line (0 = just the line)
-        FILL_COLOR:  '#c9a77c',  // the strip
-        SPEED:       420,        // px/s @ design the marks slide at, full speed
-        PERIOD:      420,        // px @ design before the pattern of marks repeats
-        MARKS:       8,          // marks in one period
-        DEPTH:       3.8,        // under the cars
-
-        // THE BUMPS: smooth rises in the road, H px high and W px long
-        // (@ design), each a random 70–100% of that. RARE, so each one reads
-        // as an event: one every EVERY px of road (@ design) on level 1 —
-        // about every 5–6 seconds at SPEED — coming closer together level by
-        // level down to EVERY_MIN at level MIN_AT_LEVEL and after.
-        BUMPS: { H: 6, W: 80, EVERY: 2400, EVERY_MIN: 1000, MIN_AT_LEVEL: 30 },
-        SAMPLE: 4,               // px @ design between points of the drawn road
-
-        // THE TERRAIN: each level's road its own shape, for variety — not
-        // difficulty (it is only drawn; speed and leads are untouched). A
-        // road is a run of SHAPES with flat GAPs between, picked from the
-        // level's MOOD. Fixed per level and lane (hashed), so a rebuild draws
-        // the same road. Flat for FLAT_START at the start, and flat from the
-        // screen's right edge once a lane's finish begins.
-        //   L   the shape's length, px @ design ([min, max])
-        //   H   its height, px @ design (up is +; a dip is negative)
-        //   RAMP  a plateau's climb and descent, px @ design
-        //   N   a washboard's bumps
-        TERRAIN: {
-            ENABLED:     true,
-            FLAT_START:  1200,       // px @ design flat at a level's start (at least the screen's width)
-            GAP:         [250, 700], // px @ design of flat road between shapes
-            FLAT_LEVELS: 2,          // levels 1..this: no terrain at all (the bumps only)
-            CALM_EVERY:  5,          // and every this-th level after: a breather
-            SHAPES: {
-                swell:     { L: [600, 900],  H: [8, 14] },
-                hill:      { L: [380, 600],  H: [14, 22] },
-                dip:       { L: [320, 480],  H: [-12, -7] },
-                plateau:   { L: [700, 1100], H: [12, 18], RAMP: [220, 300] },
-                washboard: { L: [300, 450],  H: [3, 5], N: [3, 5] },
-                straight:  { L: [400, 900] },   // just more flat road
-            },
-            // THE MOODS: how often each shape comes up (weights). A level's
-            // mood is hashed from its number, never the same twice running.
-            MOODS: {
-                calm:    { straight: 3, swell: 2 },
-                rolling: { swell: 3, dip: 2, straight: 1 },
-                hilly:   { hill: 3, plateau: 2, straight: 1 },
-                bumpy:   { washboard: 3, dip: 1, swell: 1, straight: 1 },
-            },
-        },
-    },
-
-    // ── THE SUSPENSION ───────────────────────────────────────────────────────
-    // Hill Climb Racing style: the tyres follow the road under them, and the
-    // body hangs on two springs, one over each tyre. A tyre going over a bump
-    // squashes its spring, which lifts that end of the body — front first,
-    // then rear, so the car pitches over each bump and settles.
-    //   STIFFNESS  how fast the springs answer (rad/s): higher is stiffer
-    //   DAMPING    how quickly they settle: 1 = no wobble, lower = bouncier
-    //   MAX        the most a spring may stretch or squash, px @ design — the
-    //              lanes are close, so the body never leaves its own lane
-    SUSPENSION: {
-        STIFFNESS: 16,
-        DAMPING:   0.35,
-        MAX:       9,
-    },
-
-    // ── THE RIVALS ───────────────────────────────────────────────────────────
-    // One per lane, three to a level, all the same rival — its car a new
-    // design each level (CAR.CARS), its driver's head in the window from the
-    // rival pictures: level 1 wears FILES[0], level 2 FILES[1], level 3
-    // FILES[2], level 4 FILES[0] again, and so on. (The key is still called
-    // VILLAIN from the game's earlier life; it is the rival.) See CONFIG.RACE
-    // for the race itself.
-    VILLAIN: {
-        // Head-only art: the shortest side is the face (128 px), ears / horns
-        // grow the other side. Placed by the bottom centre.
-        DIR:   'graphics/opponent/',
-        FILES: ['mouse_rookie.webp', 'bunny_sprinter.webp', 'chick_racer.webp',
-                'frog_hopper.webp', 'squirrel_dash.webp', 'puppy_rookie.webp',
-                'kitten_racer.webp', 'duck_driver.webp', 'hamster_turbo.webp',
-                'goat_kid.webp', 'red_panda.webp', 'raccoon_bandit.webp',
-                'koala_cruiser.webp', 'beaver_builder.webp', 'fox_racer.webp',
-                'sheep_challenger.webp', 'panda_pilot.webp', 'deer_racer.webp',
-                'otter_driver.webp', 'owl_racer.webp', 'crow_rival.webp',
-                'penguin_driver.webp', 'parrot_racer.webp', 'rooster_speedster.webp',
-                'eagle_challenger.webp', 'turtle_racer.webp', 'chameleon_driver.webp',
-                'gecko_racer.webp', 'crocodile_kid.webp', 'snake_racer.webp',
-                'monkey_driver.webp', 'gorilla_racer.webp', 'lemur_racer.webp',
-                'sloth_driver.webp', 'tiger_racer.webp', 'leopard_racer.webp',
-                'lion_challenger.webp', 'wolf_racer.webp', 'hyena_driver.webp',
-                'bear_racer.webp', 'polar_bear.webp', 'moose_racer.webp',
-                'ram_driver.webp', 'bull_driver.webp', 'bison_driver.webp',
-                'rhino_driver.webp', 'hippo_driver.webp', 'elephant_racer.webp',
-                'giraffe_driver.webp', 'zebra_racer.webp', 'bat_racer.webp',
-                'hedgehog_driver.webp', 'porcupine_racer.webp', 'skunk_racer.webp',
-                'badger_driver.webp', 'coyote_racer.webp', 'lynx_driver.webp',
-                'kangaroo_racer.webp', 'capybara_racer.webp', 'alpaca_racer.webp',
-                'axolotl_racer.webp', 'dragon_rival.webp', 'robot_rival.webp',
-                'alien_racer.webp', 'crowned_raven_champion.webp'],
-        DEPTH:         4,
-        PAYOUT_MULT:   1,        // coins = its lead × this (levels 1–2 are flat)
-        PREFETCH_AHEAD: 4,       // levels ahead whose rival heads load in the background (only level 1's is in the startup load)
-
-        NEXT_LEVEL_MS: 900,      // (no rank panel) pause after the last win before the next level
-        ENTER_MS:      400,      // a new level: the piggy cars roll back to the line in this + 200
-
-        // THE LEAD FIGURE over each lane (placed by RACE.LEAD).
-        LABEL: {
-            SIZE:     30,        // px @ design
-            COLOR:    '#ffffff',
-            STROKE:   '#2b2013',
-            STROKE_W: 5,
-            SUFFIX:   '',        // no unit: a count to zero, not a distance
-        },
-
-        // THE RIVAL'S CAR: a right-facing body and tyres (CARS, a new design
-        // each level), the driver's head in its window, drawn BEHIND the
-        // piggy car. It rides the road with it: tyres spinning, bumps and
-        // suspension.
-        CAR: {
-            TINT:    '#eeeeee',    // a colour to tint the body with, or null for none
-            SCALE:   1,            // of the piggy car's size
-            PREFETCH_AHEAD: 2,     // levels ahead whose car designs load in the background (only level 1's is in the startup load)
-            MIN_H:   0.9,          // never lower than this share of the piggy car's height: a low design is drawn longer instead (open ?cartest to compare)
-            DEPTH:   3.9,          // behind the piggy car (CAR.DEPTH 4)
-            // The head in the window, in the BODY's pixels (254 x 97): its
-            // centre at X, Y and its face (the picture's shortest side) H —
-            // ears / horns grow past it.
-            FACE: { X: 126, Y: 28, H: 40 },
-            // THE HEAD ON EVERY CAR (and the VS card): grown past FACE.H, and
-            // sunk behind the door — its bottom CROP cut off exactly at the
-            // window's bottom edge (FACE.S, measured from each car's art; or
-            // Y + H/2 without it). The extra size grows up, over the roof.
-            HEAD: {
-                SCALE: 1.35,       // x FACE.H
-                CROP:  0.1,        // share of the head's height hidden below the window's bottom edge
-            },
-            // THE LOOK BACK: the driver stays down out of sight — only the
-            // window shows — and pops up from the sill to glance back only at
-            // milestones, as the piggy car runs down each share of the lead in
-            // AT, staying up SHOW seconds (a random time in the range). Beaten,
-            // it stays up. ENABLED false keeps it up the whole time.
-            PEEK: {
-                ENABLED: true,
-                AT:      [0.2, 0.4, 0.6, 0.8, 0.95],   // shares of the distance covered
-                SHOW:    [1, 1.6],   // s up per look
-                UP_MS:   160,        // popping up (0: just there)
-                DOWN_MS: 0,          // ducking back down (0: just gone, no animation)
-            },
-            // THE RIVAL CAR DESIGNS — a NEW ONE EVERY LEVEL, in this order,
-            // starting over once all have been used: a right-facing body and
-            // its tyre, laid out like CONFIG.CAR — BODY_W x BODY_H art px,
-            // TYRE_SIZE square tyres with their TOP-LEFT corners at TYRES
-            // (rear, front) — and the driver's head (FACE, as above) in this
-            // body's own driver's window: its cut edge on the window's sill,
-            // the ears over the roof; S is the glass's bottom edge. With none here (or the art missing) the
-            // piggy car's body stands in, with FACE above.
-            CARS: [
-                getawayCarArt(1, 207, 104, 56, [20, 65], [126, 65], { X: 100, Y: 27, H: 36, S: 45 }),   // yellow city car
-                getawayCarArt(2, 256,  72, 56, [22, 34], [163, 34], { X: 110, Y: 17, H: 30, S: 32 }),   // red muscle car
-                getawayCarArt(3, 256, 119, 65, [29, 75], [156, 75], { X: 113, Y: 40, H: 40, S: 59 }),   // green SUV
-                getawayCarArt(4, 256, 100, 58, [28, 63], [173, 63], { X: 135, Y: 27, H: 36, S: 44 }),   // teal classic
-                getawayCarArt(5, 256,  91, 53, [29, 60], [175, 60], { X: 135, Y: 19, H: 38, S: 37 }),   // dark sedan
-                getawayCarArt(6, 256,  77, 56, [19, 39], [157, 39], { X: 112, Y: 17, H: 30, S: 30 }),   // blue sports car
-                getawayCarArt(7, 256, 101, 54, [30, 67], [176, 67], { X: 143, Y: 30, H: 36, S: 49 }),   // orange wagon
-                getawayCarArt(8, 256, 114, 60, [25, 75], [169, 75], { X: 138, Y: 34, H: 40, S: 50 }),   // cream city car
-                getawayCarArt(9, 304, 102, 64, [38, 62], [216, 62], { X: 168, Y: 28, H: 38, S: 44 }),   // red pickup
-                getawayCarArt(10, 307, 129, 64, [34, 85], [220, 85], { X: 214, Y: 42, H: 44, S: 60 }),  // blue van
-                getawayCarArt(11, 288,  73, 49, [30, 43], [208, 43], { X: 150, Y: 18, H: 30, S: 29 }),  // purple limo
-                getawayCarArt(12, 256, 150, 68, [30, 103], [162, 103], { X: 125, Y: 54, H: 50, S: 71 }), // mint bubble car
-                getawayCarArt(13, 280,  81, 53, [32, 47], [196, 47], { X: 122, Y: 24, H: 34, S: 36 }),  // red fastback
-                getawayCarArt(14, 256, 126, 65, [28, 82], [160, 82], { X: 122, Y: 39, H: 40, S: 56 }),  // green off-roader
-                getawayCarArt(15, 256,  84, 48, [32, 52], [181, 52], { X: 138, Y: 22, H: 34, S: 35 }),  // cream sedan
-                getawayCarArt(16, 256,  87, 58, [30, 52], [171, 52], { X: 118, Y: 25, H: 32, S: 38 }),  // yellow coupe
-                getawayCarArt(17, 300, 125, 69, [28, 85], [205, 85], { X: 190, Y: 37, H: 44, S: 55 }),  // blue minivan
-                getawayCarArt(18, 252,  66, 45, [36, 37], [178, 37], { X: 115, Y: 16, H: 28, S: 25 }),  // maroon coupe
-                getawayCarArt(19, 256,  97, 56, [18, 57], [167, 57], { X: 112, Y: 24, H: 34, S: 38 }),  // red hatchback
-                getawayCarArt(20, 270,  94, 54, [34, 60], [184, 60], { X: 158, Y: 23, H: 36, S: 38 }),  // blue pickup
-                getawayCarArt(21, 256,  97, 45, [35, 67], [181, 67], { X: 145, Y: 27, H: 34, S: 40 }),  // olive classic
-                getawayCarArt(22, 260,  73, 53, [34, 35], [175, 35], { X: 132, Y: 18, H: 28, S: 30 }),  // orange sports car
-                getawayCarArt(23, 260,  89, 47, [35, 59], [185, 59], { X: 148, Y: 25, H: 34, S: 39 }),  // grey estate
-                getawayCarArt(24, 280, 139, 65, [35, 97], [189, 97], { X: 168, Y: 45, H: 44, S: 64 }),  // yellow van
-                getawayCarArt(25, 256,  94, 53, [27, 58], [177, 58], { X: 120, Y: 23, H: 36, S: 38 }),  // teal hatchback
-                getawayCarArt(26, 256,  73, 47, [29, 44], [181, 44], { X: 140, Y: 17, H: 28, S: 28 }),  // dark green sedan
-                getawayCarArt(27, 256,  94, 55, [26, 61], [180, 61], { X: 145, Y: 28, H: 36, S: 41 }),  // red estate
-                getawayCarArt(28, 256,  93, 63, [17, 50], [185, 50], { X: 115, Y: 18, H: 28, S: 32 }),  // purple hot rod
-                getawayCarArt(29, 256,  88, 56, [21, 53], [174, 53], { X: 137, Y: 22, H: 34, S: 36 }),  // copper crossover
-                getawayCarArt(30, 256, 105, 53, [24, 72], [177, 72], { X: 142, Y: 33, H: 38, S: 49 }),  // yellow taxi
-                getawayCarArt(31, 256,  77, 56, [26, 43], [178, 43], { X: 115, Y: 20, H: 28, S: 31 }),  // navy coupe
-            ],
-        },
-    },
-
-    // ── THE RACE ─────────────────────────────────────────────────────────────
-    // Each lane is a race against the level's rival. The three run side by
-    // side, in parallel, and read as three rounds.
+    // ===================================================================
+    // THE SPRINGS
+    // ===================================================================
+    // The half beside the merge grid: three vertical springs in a row, each
+    // standing over its slot, the slots in a row along the half's BOTTOM edge.
+    // Every second the piggy in a slot squeezes the spring above it by its
+    // own figure (CHARGE_PER_SECOND_BY_LEVEL) until that spring reaches its
+    // strength. Once all three are fully compressed one RELEASE button lets
+    // them all go, which pays out (levelPayoutsFor), and the next level's
+    // springs (levelData.js, LEVEL_STRENGTHS) start again.
     //
-    // EACH LANE IS A LITTLE WORLD seen through its own camera (see
-    // GameScene._raceStep): the cars have places along the road and speeds,
-    // the finish line stands on the road, and the road scrolls with the
-    // lane's camera. V, the racing pace, is the road's speed (ROAD.SPEED).
-    //
-    //   START   each rival DROPS in from above, lined up with the piggy car.
-    //           The lane waits, still, until it has a piggy; LEAD_DELAY_MS
-    //           later both set off — the rival reaches V in LEAD_RIVAL_MS and
-    //           keeps it, the piggy car gets there later, so the gap opens to
-    //           the whole lead (the figure counting up, wind off the rival).
-    //   RACING  the rival holds V, holding its place on screen (RIVAL_AT of
-    //           the car area); the piggy car stands behind it by the lead and
-    //           closes as the piggy runs it down. With no piggy the lead, and
-    //           the car, hold.
-    //   FINISH  when the count reaches 0 the noses meet. The line stands on
-    //           the road AHEAD_MS of the car's speed ahead; the car keeps its
-    //           speed till wholly across, then rolls on and brakes to its
-    //           spot; the rival keeps V till its nose is over, then brakes to
-    //           rest behind. The camera follows the piggy car, carrying the
-    //           line out of the frame, and ends on the end picture (VARY).
-    //           1ST / 2ND badges go over the two.
-    //
-    // The player always wins: the figure only ever has to be run down.
-    RACE: {
-        RIVAL_AT:      0.62,     // where the rival holds while racing, share of the car area
-        RIVAL_END:     0.35,     // …eased back to as the lead runs out (the camera slides ahead, clearing the road in front), share of the car area
+    // Sizes are px @ design for a spring on a 1920-wide stage; the whole
+    // spring is scaled down as one to fit its third of the half (see
+    // createSprings), so their proportions hold on any screen.
+    SPRING: {
+        PAYOUT_MULT:    1,       // from level 3 a spring pays its strength × this, coins (see levelData.js)
+        STEP_MS:        250,     // how long each step's squeeze takes (rest of the second it holds), ms
+        STEP_EASE:      'Cubic.Out', // a crisp stop reads as stiff; 'Back.Out' overshoots and reads soft
 
-        // THE START: the drop-in, then the head start.
-        DROP: {
-            MS:         380,     // the fall
-            HEIGHT:     0.5,     // falls from this share of a lane's band above the road
-            FADE_IN:    0.45,    // share of the fall spent fading in (it starts out of sight)
-            STAGGER_MS: 110,     // between one lane's drop and the next
-            SETTLE_MS:  200,     // after the last lands, before a lane can start
-            KICK:       160,     // px/s @ design the springs take on landing
-            DUST:       6,
-        },
-        LEAD_DELAY_MS: 300,      // after the piggy goes in, before they set off
-        LEAD_RIVAL_MS: 350,      // the rival's pick-up to V (the piggy car's is as long as the lead needs)
-        // THE WIND off the rival as it pulls ahead: streaks from its tail and
-        // across its height, sliding back.
-        WIND: {
-            LINES:   11,
-            LEN:     [50, 140],  // px @ design
-            SPAN:    220,        // px @ design they travel back
-            SPEED:   3,          // trips per second
-            LINE_W:  4,
-            COLOR:   '#ffffff',
-            ALPHA:   0.95,
-            FADE_MS: 350,        // dying away once it has its lead
-        },
-        // THE TYRES turn as fast as their car goes: at road speed V they spin
-        // SPIN_AT_ROAD x CAR.SPIN_DEG_PER_SEC. So the rival's outrun the piggy
-        // car's in the head start, and the piggy car's outrun the rival's
-        // while its piggy closes the lead.
-        SPIN_AT_ROAD:  1.3,
+        // ── Placement in the half ──
+        BOTTOM_PAD:    30,       // px @ design: half's bottom edge → slot's bottom edge
+        TOP_PAD:       24,       // px @ design: half's top edge → top of the spring's label
+        BASE_GAP:      14,       // px @ design: slot's rate label → base plate
+        COL_FRAC:      0.62,     // the slot square's share of its column's width, capped at a grid cell
+        SLOT_H_FRAC:   0.22,     // …and of the half's height
+        MAX_SCALE:     1,        // the spring never draws bigger than its design size
 
-        // THE FINISH. How far ahead the line stands — AHEAD_MS of the car's
-        // speed — is picked afresh per lane, so finishes differ: short is
-        // close, long a clear win with the rival well back.
-        AHEAD_MS:      [700, 2200],
-        // THE LEVEL'S LAST WIN always takes the far end of AHEAD_MS, and is
-        // pushed further if need be to cross this long after every other lane.
-        FINAL_MARGIN_MS: 300,
-        // THE PIGGY CAR'S SKID at the end of its braking: its tyres lock for
-        // the last LOCK_S of it and it slides on, its nose dips on its springs
-        // and dust kicks up at the tyres. The rival just brakes.
-        SKID: {
-            ENABLED:       true,
-            LOCK_S:        0.35,  // s: the last of the braking, tyres locked
-            DIP:           70,    // the nose's kick down as they lock, px/s @ design (the tail lifts a third of that)
-            DUST:          4,     // puffs as they lock
-            DUST_EVERY_MS: 90,    // and one more each this while it slides
-        },
-        FINISH_BRAKE:  false,    // true: past the line both cars brake to a stop, then drive off (the old finish); false: they drive straight on and out
-        FINISH_ACCEL:  100,      // from the noses meeting till its nose is on the line, the piggy car keeps gaining speed on the rival, px/s² @ design
-        // A CAP ON HOW FAST THE PIGGY CAR LOOKS, as a multiple of road speed.
-        // A piggy far stronger than its level would otherwise close the gap and
-        // cross the line so fast the camera loses both cars and the flag. The
-        // figures still run at the piggy's real value; only the car is held.
-        MAX_SPEED:     2.5,      // x road speed V
-        CAM: {
-            DRIFT_S:   0.4,      // after the noses meet, the piggy car's lead over the rival on screen fades over about this (s)
-            EDGE_PAD:  12,       // that drift never takes the piggy car's nose closer than this to the road's right edge, px @ design
-        },
-        // THE END SCREEN: past the line both cars roll on till it has left
-        // the road's frame (LINE.OFF_PAD), so no flag is left waving there;
-        // they stop varied, so the three lanes never line up — each level
-        // gives the lanes different stopping depths (front / mid / back, up
-        // to CAR_BACK x the car's length short of the right edge, give or
-        // take JITTER of that), and each its own share of the rival tucked
-        // behind the winner (OVERLAP; below 0 a gap — never so far back that
-        // the rival leaves the frame).
-        VARY: {
-            CAR_BACK:    0.2,
-            JITTER:      0.25,
-            OVERLAP:     [-0.3, 0.45],   // from a gap behind to tucked in; never ahead
-        },
-        EDGE_PAD:      6,        // px @ design kept clear of the screen's right edge
-        BADGE_MS:      260,      // the 1ST / 2ND badges popping up
+        REST_HEIGHT:  520,       // coil height when relaxed, px
+        MIN_HEIGHT:   110,       // coil height when fully compressed, px
+        WIDTH:        170,       // coil width, px
+        COILS:        9,         // number of turns
+        END_TURNS:    0.75,      // turns at each end lying flat on its plate (a closed end), not climbing
+        LINE_WIDTH:   14,        // wire thickness, px — thicker reads as stronger
+        COLOR:        '#B0BEC5', // front of each turn
+        BACK_COLOR:   '#546E7A', // back of each turn, darker so it reads as depth
+        COIL_TILT:    22,        // half-height of each turn's ellipse (viewing angle), px
+        PLATE_COLOR:  '#78909C',
+        PLATE_H:      24,        // plate thickness, px
+        RELEASE_MS:   700,       // spring-back animation, ms
+        DEPTH:        2,         // under the slots (3) and the piggies (10+)
 
-        // THE LEVEL'S LAST WIN — the lane that completes the level — is the
-        // big finish: a LUNGE for the line (AHEAD x the car's length before
-        // it, a short burst forward of SURGE x its length, kept to the end;
-        // no lift of its own — the win's hop is the one lift), the ZOOM, and
-        // confetti. The other two lanes finish lighter: the burst, FINISH!,
-        // the green margin and the coins (WIN.CONFETTI_SMALL).
-        LUNGE: {
-            ENABLED: true,
-            AHEAD:   0.35,
-            SURGE:   [0.04, 0.08],
-            OUT_MS:  160,          // the burst forward — then kept
-        },
+        // ── Look ──
+        OUTLINE_COLOR:   '#263238', // dark edge round the wire
+        HIGHLIGHT_COLOR: '#FFFFFF', // thin light streak along the front of the wire
+        HOT_COLOR:       '#FF8A65', // the front warms toward this as it is squeezed
+        GLOW_COLOR:      '#FFD54F', // pulsing glow behind a fully compressed spring
+        DUST_COLOR:      '#CFD8DC',
 
-        // THE LEAD FIGURE'S COLOUR: BEHIND_COLOR while the rival leads. Once
-        // the piggy overtakes it turns AHEAD_COLOR with AHEAD_PREFIX, starting
-        // from what the last tick went past zero by and climbing smoothly at
-        // that piggy's rate (slowed with the slow motion) until the nose
-        // touches the line. There it stops at the winning margin, pops, holds
-        // HOLD_MS and fades. Display only: the lead itself is 0.
-        // It stays in ONE PLACE per lane: centred on the lane's road, ABOVE
-        // px (@ design) clear of the piggy car's roof height.
-        LEAD: {
-            ABOVE:         40,
-            BEHIND_COLOR:  '#1c1c1c',  // black, on a white outline
-            BEHIND_STROKE: '#ffffff',
-            AHEAD_COLOR:   '#1c1c1c',  // black as while behind: the icon says who leads
-            AHEAD_STROKE:  '#ffffff',
-            AHEAD_PREFIX: '',          // none: the icon says who leads
-            // THE LEAD RUN OUT: no 0 — the last figure swells to SCALE and
-            // fades over MS, and the figure is gone for the rest of the race.
-            VANISH: { MS: 260, SCALE: 1.6 },
-            FLIP_SCALE:   1.3,         // the leader picture's swell as the piggy takes the lead (the figure stays still)
-            HIDE_AT_LINE: true,        // gone the moment the nose crosses (FINISH! is there); false = swell, hold, fade
-            FREEZE_SCALE: 1.45,        // the swell as it stops at the line
-            HOLD_MS:      1200,
-            FADE_MS:      300,
-        },
+        // ── Motion ──
+        BULGE:           0.015,  // sideways swell of the middle turns on each step, fraction of width
+        STEP_RIPPLE:     2,      // wave down the coil on each step, px — keep small, wobble reads as weak
+        RELEASE_RIPPLE:  30,     // wave up the coil on release, px
+        RIPPLE_MS:       450,    // how long the release ripple takes to die out, ms
+        STEP_RIPPLE_MS:  180,    // how long a step's ripple takes to die out, ms
+        SHIVER_PX:       1.5,    // up-and-down shiver of the top when full (less while compressing), px
+        SHAKE_MS:        150,    // screen shake on release, ms
+        SHAKE_INTENSITY: 0.006,  // screen shake strength, fraction of the view
+        DUST_COUNT:      10,     // dust puffs per spring on release
 
-        // THE ZOOM, on the level's last finish: as the line comes within
-        // AHEAD (x the car's length) of the winner's nose, that lane's
-        // SECTION ALONE zooms in on the crossing — at most SCALE, over IN_MS —
-        // like a camera of its own, and HOLD_MS after the win eases back out
-        // over OUT_MS. The merge grid and the other lanes do not move.
-        ZOOM: {
-            ENABLED: true,
-            AHEAD:   0.8,
-            SCALE:   1.35,        // at most: less if the lead figure would not fit in view
-            IN_MS:   350,
-            HOLD_MS: 250,
-            OUT_MS:  450,
-            IGNORE_DEPTH: 50,     // not drawn zoomed: coins in flight, a dragged pig, the UI
-        },
-
-        // THE FINISH LINE: a chequered post standing on the road, a chequered
-        // flag flying from its top. Sizes are shares of the car's height.
-        LINE: {
-            DEPTH:    3.85,      // behind the cars, over the road
-            OFF_PAD:  8,         // px @ design past the road's left edge it ends, out of the frame
-            POST_W:   0.16,
-            POST_H:   1.45,
-            FLAG_W:   0.72,
-            FLAG_H:   0.44,
-            CHECKS:   [5, 3],    // the flag's columns and rows
-            DARK:     '#1c1c24',
-            LIGHT:    '#ffffff',
-            WAVE_MS:  260,       // one flutter of the flag
-        },
-
-        // THE WIN, as the winner's front crosses the line.
-        WIN: {
-            DEPTH:      6,
-            CONFETTI:   80,          // the level's last finish
-            CONFETTI_SMALL: 0,       // the other two
-            CONFETTI_SIZE: [7, 13],  // px @ design, each piece's long side
-            CONFETTI_RAIN: 45,       // the last finish's shower, falling from the lane's top
-            RAIN_MS:    [900, 1500], // each piece's fall
-            COLORS:     ['#ffd23f', '#ff5a5f', '#3ddc97', '#4cc9f0', '#ffffff', '#ff9f1c'],
-            RISE:       [90, 190],   // px @ design the confetti flies up — never above its lane's top
-            SPREAD:     [-260, 260], // …and sideways
-            FLIGHT_MS:  [650, 1150],
-            RING_MS:    520,         // the burst ring and its rays
-            RAYS:       10,
-            TEXT:       'FINISH!',
-            TEXT_SIZE:  44,          // px @ design
-            TEXT_COLOR: '#ffe27a',
-            TEXT_STROKE:'#2b2013',
-            TEXT_HOLD_MS: 900,
-            SHAKE:      0,           // camera shake strength (0 = none) — off: it shook the whole screen, merge grid and all
-            SHAKE_MS:   160,
-            HOP:        12,          // px @ design the winner's hop rises
-            HOP_OTHER:  0.5,         // the other lanes' wins hop this share of HOP (the level's last win: all of it)
-            HOP_MS:     380,         // up and down, at full speed (slowed with the slow motion)
-            HOP_LAND:   90,          // px/s @ design the springs take landing
-            DUST:       6,           // puffs at the winner's tyres
-        },
-        BADGE: {
-            DEPTH:      4.6,
-            SIZE:       24,          // px @ design
-            FIRST:      { TEXT: '1ST', FILL: '#ffd23f', INK: '#5a3b00' },
-            SECOND:     { TEXT: '2ND', FILL: '#d7dde5', INK: '#2f3742' },
-        },
-        // A LANE'S CLOSE once both cars have stopped: they drive off to the
-        // right, the lane dims and a "RACE n WON!" banner slams in. It stays
-        // till the next level.
-        CLOSE: {
-            ENABLED:    true,
-            SETTLE_MS:  350,         // the cars at rest this long before they drive off
-            ACCEL:      500,         // px/s² @ design, the cars pulling away
-            CRUISE:     0.6,         // their top speed, × road speed: an easy drive off
-            RIVAL_LAG_MS: 120,       // the rival sets off this much after the piggy
-            DEPTH:      6.5,
-            DIM:        0.35,        // black over the lane, 0..1
-            TEXT:       'RACE {n} WON!', // {n} = 1..3 top down
-            SIZE:       30,          // px @ design, at most (shrunk to fit the lane)
-            COLOR:      '#ffd23f',
-            STROKE:     '#2b2013',
-            BAR_COLOR:  '#1d2430',   // the banner behind the text
-            BAR_ALPHA:  0.85,
-            CHECKER:    10,          // px @ design, a chequer square at the banner's ends
-            POP_MS:     220,         // the slam in
-        },
-    },
-
-    // ── THE RANK ─────────────────────────────────────────────────────────────
-    // The player climbs a racer ranking, one level at a time. Before the first
-    // race they are #START; it falls by the same share each level (about 9%
-    // with these figures) — big jumps while the rank is big, smaller as it
-    // shrinks (CURVE above 1 front-loads it) — to TAIL + 1, then one place a
-    // level to #1 when level TOP_LEVEL is won, and stays #1 after (for now: a
-    // short CHAMPION toast). Each level's opponent is the racer at the rank
-    // the player is about to take.
-    //
-    // After each level a quick panel shows it over the race area only (the
-    // merge grid carries on): the player's row slides up past the rival just
-    // beaten as the rank counts down, the next opponent at the foot. A tap on
-    // it skips; the next level starts as it goes.
-    RANK: {
-        ENABLED:   true,
-        START:     66,         // TOP_LEVEL + 1 with TAIL = TOP_LEVEL - 1: one place a level, all the way
-        TOP_LEVEL: 65,
-        TAIL:      64,
-        CURVE:     1,
-        DELAY_MS:       250,   // after the level's last finish, before it shows
-        POP_MS:         180,
-        SLIDE_DELAY_MS: 120,
-        SLIDE_MS:       800,
-        HOLD_MS:        650,
-        OUT_MS:         220,
-        DEPTH:     40,
-        W:         440,        // px @ design, at most (and 86% of the race area)
-        ROW_H:     144,        // px @ design, at most: a row, tall enough for the racer's sprite
-        AHEAD:     3,          // racers listed above the player (grey till reached)
-        BEHIND:    1,          // racers beaten earlier listed below the rival just beaten
-        TITLE:       'LEADERBOARD',
-        CHAMP_TEXT:  'CHAMPION! #1',
-        YOU:         'YOU',
-        NEXT:        'NEXT',
-        CARD:        '#fff6e6',
-        INK:         '#2b2013',
-        TITLE_COLOR: '#e8590c',
-        YOU_FILL:    '#ffd23f',
-        ROW_FILL:    '#f26b5b',   // the active opponent's row (the rival raced, then the next), as the VS card's rival half
-        ROW_IDLE:    '#a39a90',   // every other opponent's row
-        ROW_INK:     '#ffffff',   // opponents' rows: their rank and name (the player's row: INK)
-        GAP_COLOR:   '#a08560',
-        NEXT_COLOR:  '#6b4a2a',
-        LOCKED_TINT: '#7a7266',   // racers not yet reached: their sprite as a silhouette of this colour
-        UNLOCK_MS:    350,        // the next opponent's silhouette filling in with colour
-        PASSED_ALPHA: 0.45,       // racers already passed: their rows see-through to this (0-1)
-        NEXT_MS:      2500,       // the next opponent highlighted this long after the climb, before the card goes
-        NEXT_RING:    '#ffffff',  // the highlighted next opponent's outline
-        // Racer names, fixed per rank.
-        NAMES: ['Turbo Tess', 'Dusty Dan', 'Nitro Nia', 'Rusty Rex', 'Zippy Zoe', 'Blaze Bo',
-                'Skid Sam', 'Vroom Val', 'Drift Dex', 'Rocket Ray', 'Gravel Gus', 'Piston Pia',
-                'Torque Ty', 'Boost Bea', 'Clutch Cal', 'Spark Sid', 'Fender Flo', 'Gearbox Gil',
-                'Hubcap Hal', 'Axle Ada', 'Throttle Tim', 'Brake Bree', 'Chrome Cleo', 'Exhaust Eli',
-                'Muffler Mo', 'Spoiler Sal', 'Wheelie Wes', 'Racer Ruby', 'Lap Lou', 'Pit Pete'],
-    },
-
-    // ── THE VS CARD ──────────────────────────────────────────────────────────
-    // At each level's start, as the rivals drop in: a card over the race area
-    // only (like the rank panel), split by a slant — the player's piggy and rank on the left,
-    // the level's rival (its head, its RANK name and rank) on the right, VS
-    // between. No lane drives until it goes; a tap skips it.
-    VERSUS: {
-        ENABLED:    true,
-        POP_MS:     200,
-        HOLD_MS:    1200,      // up, after the sides and the VS are in
-        OUT_MS:     220,
-        DEPTH:      40,
-        W:          440,       // px @ design, at most (and 86% of the race area)
-        H:          210,       // px @ design, at most (and 86% of the race area)
-        CAR_W:      0.92,      // each racer's car, × its half's width (capped by the height)
-        PULSE:      1.08,      // the rival's picture swells to this × and back, over and over (1 = still)
-        PULSE_MS:   380,       // ms, one swell (the same back)
-        SLANT:      0.12,      // the split's lean: its top and bottom this share of the height either side of centre
-        VS_TEXT:    'VS',
-        VS_COLOR:   '#ffffff',
-        YOU:        'YOU',
-        YOU_FILL:   '#ffd23f', // the player's half
-        RIVAL_FILL: '#f26b5b', // the rival's half
-        RANK_FILL:  '#2b2013', // the rank pills: the player's now, the rival's the one a win takes
-        RANK_COLOR: '#ffffff',
-        RANK_SIZE:  26,        // px @ design, the rank in its pill (the name is 20)
-    },
-
-    // ── THE CHASE'S FEEDBACK ─────────────────────────────────────────────────
-    // What makes each second of driving read like a hit.
-    CHASE_FX: {
-        // THE DISTANCE POP: each tick, the metres just closed fall off
-        // the lane's gap line ("−200 m") and fade — the chase's damage numbers.
-        DIST_POP: {
-            ENABLED:  true,
-            SIZE:     24,        // px @ design
-            COLOR:    '#1c1c1c', // as the lead figure: dark on a white outline
-            STROKE:   '#ffffff',
-            STROKE_W: 4,         // px @ design
-            FALL:     40,        // px @ design it falls, from the figure
-            MS:       500,
-            JITTER:   10,        // px @ design of sideways scatter, so ticks don't stack
-        },
-        // THE CAR GLIDES. The lead figure steps down by the piggy's value at
-        // each tick; the piggy car closes that much smoothly, at the piggy's
-        // rate, without stopping between ticks. ENABLED false: it jumps with
-        // the figure instead.
-        COUNT: {
-            ENABLED: true,
-        },
-        // THE PIGGY'S FIGURE PULSES on each tick, as the lead drops.
-        RATE_PULSE: {
-            ENABLED: true,
-            SCALE:   1.2,
-            MS:      200,
-        },
-        // SPEED LINES AND EXHAUST behind the piggy car while it drives, as
-        // strong as the chase is quick: by how many seconds the lane's piggy
-        // would take to cover the whole level distance — SLOW_SECS or more is
-        // the faintest (MIN), FAST_SECS or less the fullest. So merging a
-        // better piggy visibly makes the chase more intense, level after
-        // level. They fade in and out with the tyres.
-        SPEED: {
-            ENABLED:   true,
-            SLOW_SECS: 40,
-            FAST_SECS: 4,
-            MIN:       0.35,     // intensity of the slowest chase, 0..1
-            DEPTH:     3.85,     // over the road, under both cars
-            LINES:      6,       // streaks per lane
-            LINE_COLOR: '#ffffff',
-            LINE_ALPHA: 0.6,
-            LINE_W:     3,       // px @ design
-            LINE_LEN:   [22, 70],// px @ design, shortest to longest
-            LINE_SPAN:  150,     // px @ design they travel back from the bumper
-            LINE_SPEED: 2.4,     // trips per second
-            // Exhaust puffs from the tailpipe — in the piggy car body's own
-            // pixels (CONFIG.CAR.BODY_W x BODY_H) — RATE puffs a second.
-            EXHAUST: { X: 6, Y: 78, RATE: [1.5, 9], R: [3, 6], LIFE: 0.6,
-                       COLOR: '#ffffff', ALPHA: 0.55, MAX: 60 },
-        },
+        // ── Labels ──
+        // The spring's remaining figure (MAX! when full) over it, and the piggy's figure
+        // over its slot, in one look.
+        LABEL: { SIZE: 30, COLOR: '#1c1c1c', STROKE: '#ffffff', STROKE_W: 5 },  // px @ design
+        RATE_SUFFIX: '',         // after each slot's figure (none: a bare number)
+        // THE PIGGY'S FIGURE PULSES on each tick, as its spring steps.
+        RATE_PULSE: { ENABLED: true, SCALE: 1.2, MS: 200 },
+        // The RELEASE button, centred in the half over the squeezed springs.
+        RELEASE_BTN: { TEXT: 'RELEASE', SIZE: 56, COLOR: '#FFFFFF', BG: '#E53935',
+                       PAD_X: 40, PAD_Y: 16, Y_FRAC: 0.45 },   // px @ design; Y_FRAC of the rest height above the base
     },
 
     // ── THE PIGGY STEERS ─────────────────────────────────────────────────────
@@ -1208,72 +689,6 @@ var CONFIG = {
         ],
     },
 
-    // ===================================================================
-    // THE CAR AREA
-    // ===================================================================
-    // The half beside the merge grid: the three slots stacked down its LEFT
-    // edge, a car beside each, and the villains to the right. Every charge
-    // tick each piggy in a slot drives its car its own distance
-    // (CHARGE_PER_SECOND_BY_LEVEL, metres per second) closer to its villain.
-    CAR_AREA: {
-        // The slot column, down the area's left edge (px @ design).
-        SLOT_COLUMN_PAD: 28,     // area's left edge → slot's left edge
-        SLOT_COLUMN_GAP: 28,     // slot's right edge → where the empty car
-                                 // area starts (see GameScene.carArea)
-        // One slot (with its rate label) gets a third of BAND_FRAC of the
-        // area's height; the slot square is SLOT_FRAC of that, capped at a
-        // grid cell.
-        BAND_FRAC: 0.9,
-        SLOT_FRAC: 0.62,
-        RATE_SUFFIX: '',         // after each slot's figure (none: a bare number, like the lead)
-    },
-
-    // ── THE CAR ──────────────────────────────────────────────────────────────
-    // One car per slot, built from graphics/hero_car: the right-facing body and two
-    // copies of the tyre. Positions are in the BODY's own pixels — its top-left
-    // at 0,0 — and give each tyre's TOP-LEFT corner. The whole car is then
-    // scaled as one, and placed by the point under its middle where the tyres
-    // meet the ground (see _makeCar), so it always stands ON the line it is
-    // given.
-    CAR: {
-        BODY_W: 254,             // the body art's size, px
-        BODY_H: 97,
-        TYRE_SIZE: 53,           // the tyre art's size, px (square)
-        TYRES: [
-            { x: 26,  y: 66 },   // rear
-            { x: 175, y: 66 },   // front
-        ],
-        TYRES_IN_FRONT: true,    // tyres drawn over the body's dark arches
-        // THE DRIVER: the piggy in side view (looking ahead, at the rival) in
-        // the front window, in the BODY's pixels. Its height H with the bottom
-        // CROP cut off at the window's bottom edge S, centred at X; whatever
-        // is outside the glass (TOP, LEFT, RIGHT edges) cut off too.
-        DRIVER: { KEY: 'piggy_side', X: 120, S: 43, TOP: 14, LEFT: 96, RIGHT: 147, H: 42, CROP: 0.1 },
-
-        // ONE CAR PER SLOT, its road the line through the slot's bottom edge.
-        // Sized to WIDTH_FRAC of the car area's width, but never taller (ground
-        // to roof) than MAX_H_FRAC of a slot. Its LEFT edge sits LEFT_GAP px
-        // (@ design) into the car area — close beside its slot, which is
-        // CAR_AREA.SLOT_COLUMN_GAP away.
-        WIDTH_FRAC: 0.45,
-        // …and then scaled by this, whatever capped it above — 0.8 is 20%
-        // smaller. The car shrinks toward its slot; the rival car is drawn at
-        // the same pixel scale (VILLAIN.CAR.SCALE).
-        SCALE:      0.8,
-        MAX_H_FRAC: 1,
-        LEFT_GAP:   0,
-        DEPTH:      4,
-
-        // In the race (CONFIG.RACE) both cars of a lane drive the whole race,
-        // piggy or not — see GameScene._laneRacing. Otherwise:
-        // THE TYRES TURN while the car's slot has a piggy driver in it. Both
-        // tyres of a car share one angle. They speed up to SPIN_DEG_PER_SEC
-        // when a piggy is put in and coast to a stop when it is taken out —
-        // SPIN_EASE is how quickly they get there (per second).
-        SPIN_DEG_PER_SEC: 540,
-        SPIN_EASE:        4,
-        DUST:             '#d9c3a0',   // the puffs at the tyres (a drop, a hop, a head start)
-    },
 };
 
 // -------------------------------------------------------------------
