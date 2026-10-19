@@ -92,7 +92,7 @@ var CONFIG = {
         BATCH:    4,        // icons per tick, so ~4.5 per second at the default
     },
 
-    BATTERY_START_LEVEL: 1,
+    BATTERY_START_LEVEL: 10,
     // Coins a new run starts with. Default 2500; raise it to debug later levels.
     START_COINS: 2500,
     // THE ECONOMY. Coins come from releasing the springs — see levelData.js.
@@ -617,7 +617,7 @@ var CONFIG = {
         COL_FRAC:      0.62,     // the slot square's share of its column's width, capped at a grid cell
         SLOT_H_FRAC:   0.22,     // …and of the half's height
         MAX_SCALE:     1,        // the spring never draws bigger than its design size
-        SIZE:          0.8,      // the spring's size, fraction of the most that fits (its base stays put)
+        SIZE:          0.64,     // the spring's size, fraction of the most that fits (its base stays put)
 
         REST_HEIGHT:  520,       // coil height when relaxed, px
         MIN_HEIGHT:   110,       // coil height when fully compressed, px
@@ -676,8 +676,9 @@ var CONFIG = {
     // Each level, three copies of one item ride the springs' top plates; the
     // RELEASE launches them up off the screen and the next level's drop in.
     PAYLOAD: {
-        FILES: ['astronaut', 'flag', 'dome', 'solar-panels', 'water-tower'],  // graphics/payload/<name>.webp, level 1, 2, … (loops)
+        FILES: ['spacecraft', 'dome', 'solar-panels', 'water-tower', 'antenna'],  // graphics/payload/<name>.webp, level 1, 2, … (loops)
         SIZE:      240,          // longest side, px @ spring design (× the spring's scale)
+        MIRROR:    [1],          // which of the three (0, 1, 2 — spring / spot order) are drawn flipped left-right, so the copies differ
         PIVOT_X:   { 'flag': 0 }, // by file: the point across the picture (0 left .. 1 right) that stands on the plate's centre; 0.5 if not listed
         SINK:      0.4,          // how far its bottom sits into the top plate's face, fraction of the face's half-height
         DEPTH:     4,            // over the springs (2) and the slots (3), under the piggies
@@ -685,6 +686,16 @@ var CONFIG = {
         LAUNCH_SPIN: 25,         // up to this much turn on the way out, degrees
         DROP_MS:   500,          // the next one dropping onto its plate, ms
         DROP_PX:   120,          // …from this far above, px @ spring design
+        // "LAUNCH N" AND THE ITEM'S NAME at the top centre of the launch half, over
+        // everything there (springs, payloads, the flight, Mars): the item
+        // this level launches, or the one flying / landing. 'solar-panels'
+        // shows as "Solar Panels" unless TITLES names it.
+        NAME_LABEL: { SIZE: 32, COLOR: '#FFFFFF', STROKE: '#1c1c1c', STROKE_W: 6,  // px @ design
+                      TOP: 18,          // its top below the half's top, px @ design
+                      DEPTH: 150,       // UI: over coins in flight (100+) too
+                      LAUNCH: 'Launch', // the line above it: "Launch 1", "Launch 2", … (the level)
+                      LAUNCH_SIZE: 20,  // …its text size, px @ design
+                      TITLES: {} },     // by file: the name to show instead
     },
 
     // ── THE SKY AND THE FLIGHT ───────────────────────────────────────────────
@@ -746,21 +757,91 @@ var CONFIG = {
         ENABLED:   true,
         DEPTH:     45,           // the colony's layer in the spring half: over the flight (40), under coins and dragging
         TILE:      512,          // the ground tile's side on the map, map px
-        FIT:       0.6,          // the new spots' box fills this much of the half (centred on them)
+        FIT:       0.6,          // the box round the new spots and the colony so far fills this much of the half (centred on it)
         ZOOM_MAX:  1,            // closest view, screen px per map px @ design (× platformScale)
         FADE_MS:   250,          // the cut in (as the flight ends) and back out, ms
         FALL_MS:   433,          // each one's fall from above the screen, ms
         MAX_DELAY: 1000,         // each one starts after a random 0..this, ms
-        HOLD_MS:   1000,         // after the last touchdown, before going back, ms
+        HOLD_MS:   3000,         // after the last touchdown, before going back, ms
         SQUASH:    0.22,         // touchdown squash: this much flatter (and half as much wider)
         SQUASH_MS: 90,           // …down, and the same back up, ms
-        DUST: { COUNT: 9,        // puffs per touchdown
+        // SIZE, SPEED and COUNT are for an item REF map px big; a bigger one
+        // (a spacecraft) kicks up more, further, in proportion.
+        DUST: { REF:   100,      // the item size the numbers below are for, map px
+                COUNT: 9,        // puffs per touchdown (× the size ratio, rounded up)
                 SIZE:  14,       // radius, map px (each 0.6..1.4 of it, growing as it fades)
                 SPEED: 260,      // outward, map px per second (each 0.4..1 of it)
                 TTL:   380,      // life, ms (each 0.7..1.3 of it) — Mars dust settles fast
                 // Sampled from graphics/mars/mars_ground.webp: its average colour,
                 // and the means of its darkest and lightest fifths.
                 COLORS: ['#DB6C35', '#D46532', '#E27438'] },
+        // A SOFT SHADOW under each item on the ground (drawn in code, so the
+        // pictures stay shadowless for the springs and the flight). Smaller and
+        // fainter the higher it is off the ground — falling in, or hopping.
+        SHADOW: { COLOR: '#3A1608',   // dark red-brown, the ground's own shade
+                  ALPHA: 0.245,       // on the ground
+                  WIDTH: 0.8,         // across, × the item's drawn width
+                  FLAT:  0.28,        // its height, × its width (the 3/4 view)
+                  LIFT:  1.5,         // gone at this height above the ground, × the item's size
+                  RAISE: 0.06,        // its middle this far up from the feet, × the item's drawn height
+                  // By item: WIDTH / FLAT / RAISE in place of the above, for
+                  // pictures whose base is wider or deeper than most.
+                  BY_ITEM: { 'spacecraft': { WIDTH: 1.15, FLAT: 0.32, RAISE: 0.08 } } },
+        // WHAT EACH ITEM DOES once its three are down, and what it leaves on
+        // the ground for good (redrawn on every later landing): astronauts hop
+        // out and back leaving footprints; flags flutter and mark the camp's
+        // edge; domes get paths to the middle; solar panels bring dusk, power
+        // runs down cables and the domes light up; water towers get pipes, a
+        // wet patch and the first sprout. Keyed by PAYLOAD.FILES name in code.
+        // THE CREW: no level of its own — it rides inside FROM and, once that
+        // has landed, walks out of it (copy i of FROM lets out crew member i)
+        // to its own COLONY_SPOTS spots, hopping, and stays.
+        CREW: { NAME: 'astronaut',    // graphics/payload/<name>.webp, and its COLONY_SPOTS key
+                FROM: 'spacecraft',   // the item it comes out of
+                DELAY_MS: 1000,       // after the craft's landing, before the first one shows, ms
+                HATCH:  0.45,         // where it shows, up on the craft: × the craft's drawn height above its feet
+                APPEAR_MS: 150,       // showing at the hatch, ms
+                JUMP_MS: 550,         // the jump down to the ground in front of the craft, ms
+                JUMP_H: 0.2,          // how high it springs before dropping, × its size
+                GAP_MS: 450,          // between one crew member and the next, ms
+                MAX_HOPS: 4,          // each leg of the walk takes at most this many hops (longer hops if far)
+                // THE FLAG, no level either: the first crew member walks to the
+                // flag's first COLONY_SPOTS spot on its way, plants it, then goes on.
+                FLAG: 'flag',         // graphics/payload/<name>.webp, and its COLONY_SPOTS key
+                PLANT_MS: 450,        // the flag rising out of the ground, ms (the walk waits for it)
+                FLAG_DELAY_MS: 1000,  // it rises no sooner than this after the first crew member's (its planter's) touchdown, ms (it waits at the pole)
+                IDLE_SQUASH: 0.05,    // standing still, it breathes: this much flatter (and half as much wider) at most
+                IDLE_MS: 1100 },      // …one breath, ms
+        // A BANNER WITH CONFETTI once a landing's reaction is over (the first:
+        // after the crew has walked out), by the level that landed. Shown for
+        // MS, then back to Earth.
+        BANNER: { TEXTS: { 1: 'First Landing!', 5: 'Base Established!' },
+                  MS:    2600,        // on screen before going back, ms
+                  Y:     0.32,        // its middle, fraction of the half's height from its top
+                  SIZE:  60, COLOR: '#FFFFFF', STROKE: '#7A2E10', STROKE_W: 8,   // px @ design
+                  RIBBON: '#E8572A', RIBBON_EDGE: '#A63A17',
+                  POP_MS: 420,        // popping in, ms
+                  DEPTH: 160,         // UI, over everything
+                  CONFETTI: { COUNT: 110,
+                              SPEED: 900,     // burst, px @ design per second (each 0.4..1 of it)
+                              GRAVITY: 1300,  // px @ design per second²
+                              SIZE: 16,       // a piece's long side, px @ design (each 0.6..1.2 of it)
+                              COLORS: ['#FFD54F', '#4FC3F7', '#F06292', '#81C784', '#FFFFFF', '#BA68C8'] } },
+        REACT: { HOLD_MS:   1000,     // the least hold after the reaction starts, ms
+                 HOP_MS:    1040,     // one hop, ms
+                 HOP_PAUSE: 220,      // standing still between hops, ms
+                 HOP_H:     0.1,      // how high a hop goes, × the item's size
+                 HOP_STEP:  0.3,      // one hop's length, × the crew member's size (unless MAX_HOPS stretches it)
+                 DUSK_ALPHA: 0.6,     // how dark the solar panels' dusk gets
+                 DUSK_MS:   1400,     // how long it stays dark, ms
+                 MARK:   '#A9461F',   // footprints and wet ground
+                 PATH:   '#C05A2B',   // paths between the domes
+                 CLAIM:  '#F6B07A',   // the camp's dashed edge
+                 CABLE:  '#3B3446',   // power cables
+                 PIPE:   '#9FB3C0',   // water pipes
+                 DUSK:   '#1A1440',   // the dusk over Mars
+                 GLOW:   '#FFD27A',   // lit domes and the power running to them
+                 SPROUT: '#5FC24A' }, // the first green
     },
 
     // ── THE PIGGY STEERS ─────────────────────────────────────────────────────

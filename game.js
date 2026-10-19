@@ -644,6 +644,9 @@ class GameScene extends Phaser.Scene {
         for (const p of this.payloads || []) gone(p);
         this.payloads = [];
         for (const t of this.springLabels) gone(t);
+        gone(this.itemNameText);
+        gone(this.itemLaunchText);
+        this.itemNameText = this.itemLaunchText = null;
         this.springGfx = null;
         this.springLabels = [];
         gone(this.coinIcon);
@@ -1097,6 +1100,19 @@ class GameScene extends Phaser.Scene {
         // tweens), so every spring not letting go gets its payload back here.
         this.payloads = this.springs.map((s, i) => (s.phase === 'releasing' ? null : this._makePayload(i, false)));
         this.springLabels = xs.map((x) => this.add.text(x, labelY, '', style).setOrigin(0.5, 1).setDepth(5));
+        // THE ITEM'S NAME, top centre of the half, as UI over all of it.
+        // "Launch N" over it, smaller.
+        const NL = (CONFIG.PAYLOAD || {}).NAME_LABEL || {};
+        const nameStyle = (size) => ({
+            fontSize: Math.max(10, Math.round(size * scale)) + 'px',
+            fontFamily: CONFIG.FONT_FAMILY, fontStyle: CONFIG.FONT_WEIGHT,
+            color: NL.COLOR || '#FFFFFF', stroke: NL.STROKE || '#1c1c1c',
+            strokeThickness: Math.round(v(NL.STROKE_W, 8) * scale * Math.min(1, size / v(NL.SIZE, 32))),
+        });
+        this.itemLaunchText = this.add.text(B.x + B.width / 2, B.y + s(v(NL.TOP, 18)), `${NL.LAUNCH || 'Launch'} ${this.level}`, nameStyle(v(NL.LAUNCH_SIZE, 20)))
+            .setOrigin(0.5, 0).setDepth(v(NL.DEPTH, 150));
+        this.itemNameText = this.add.text(B.x + B.width / 2, this.itemLaunchText.y + this.itemLaunchText.height, '', nameStyle(v(NL.SIZE, 32)))
+            .setOrigin(0.5, 0).setDepth(v(NL.DEPTH, 150));
 
         // The face texture the filled state uses, baked at the GRID's cell size
         // and scaled down here — one texture for both.
@@ -1669,6 +1685,29 @@ class GameScene extends Phaser.Scene {
         this._updateFlight(dt);
         this._updateLanding(dt);
         this._drawSprings();
+        this._updateItemName();
+    }
+
+    // "Launch N" and the item's name over the half: the launch landing,
+    // else flying, else on the springs.
+    _updateItemName() {
+        const t = this.itemNameText;
+        if (!t || !t.scene) return;
+        // ON EARTH ONLY: hidden in the flight and on Mars, and while the
+        // start overlay dims all but the spawn button.
+        const show = !this.startOverlay && !this.flight && !this.landing;
+        t.setVisible(show);
+        if (this.itemLaunchText && this.itemLaunchText.scene) this.itemLaunchText.setVisible(show);
+        const PL = CONFIG.PAYLOAD || {}, NL = PL.NAME_LABEL || {}, files = PL.FILES || [];
+        const lvl = this.landing ? this.landing.level : this.flight ? this.flight.level : this.level;
+        const file = files[(Math.max(1, lvl) - 1) % Math.max(1, files.length)];
+        const key = lvl + ' ' + file;
+        if (t.key === key) return;
+        t.key = key;
+        const title = (NL.TITLES || {})[file] ||
+            String(file || '').split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        t.setText(title);
+        if (this.itemLaunchText && this.itemLaunchText.scene) this.itemLaunchText.setText(`${NL.LAUNCH || 'Launch'} ${lvl}`);
     }
 
     // ── PAYLOADS ─────────────────────────────────────────────────────────────
@@ -1683,7 +1722,9 @@ class GameScene extends Phaser.Scene {
         // on the plate's centre — a flag's pole, not the middle of its cloth.
         const files = PL.FILES || [], file = files[(Math.max(1, this.level) - 1) % Math.max(1, files.length)];
         const px = (PL.PIVOT_X || {})[file];
-        const img = this.add.image(G.xs[i], G.baseY, key).setOrigin(px !== undefined ? px : 0.5, 1).setDepth(PL.DEPTH || 4);
+        const flip = (PL.MIRROR || []).includes(i);    // this copy mirrored (the pivot with it)
+        const ox = px !== undefined ? px : 0.5;
+        const img = this.add.image(G.xs[i], G.baseY, key).setOrigin(flip ? 1 - ox : ox, 1).setFlipX(flip).setDepth(PL.DEPTH || 4);
         const src = img.frame;
         img.setScale((PL.SIZE || 120) * G.k / Math.max(src.width, src.height));
         img.dropOff = 0;
@@ -1917,10 +1958,15 @@ class GameScene extends Phaser.Scene {
         // only that and the top layers (_flightCamFilter).
         f.cam = this.cameras.add(B.x, B.y, B.width, B.height).setScroll(B.x, B.y);
         this._flightCamFilter();
+        // THE SKY SHOWS EVEN WITH NO PAYLOAD (its picture missing): it used
+        // to return before this, and the flight then ran unseen.
+        if (g) g.setVisible(true).setAlpha(0);
+        if (this.flightBgGfx) this.flightBgGfx.setVisible(true).setAlpha(0);
         if (!this.textures.exists(key) || !G) return;
         const size = ((CONFIG.PAYLOAD || {}).SIZE || 120) * G.k * (F.SCALE || 1.3);
         G.xs.forEach((x, i) => {
-            const img = this.add.image(x, B.y + B.height + size, key).setOrigin(0.5).setDepth((F.DEPTH || 40) + 1).setAlpha(0);
+            const img = this.add.image(x, B.y + B.height + size, key).setOrigin(0.5).setDepth((F.DEPTH || 40) + 1).setAlpha(0)
+                .setFlipX(((CONFIG.PAYLOAD || {}).MIRROR || []).includes(i));
             img.setScale(size / Math.max(img.frame.width, img.frame.height));
             img.by = img.y;
             // Up into view from below, as the camera catches them.
@@ -1929,8 +1975,6 @@ class GameScene extends Phaser.Scene {
             f.imgs.push(img);
             this.cameras.main.ignore(img);
         });
-        if (g) g.setVisible(true).setAlpha(0);
-        if (this.flightBgGfx) this.flightBgGfx.setVisible(true).setAlpha(0);
     }
 
     // Each frame: the climb speeds up (ACCEL_MS to full SPEED), the payloads
@@ -2017,10 +2061,18 @@ class GameScene extends Phaser.Scene {
         const L = this.layoutConfig, B = L.partB, SW = this.scale.width, SH = this.scale.height;
         const T = M.TILE || 512, fade = M.FADE_MS || 250;
 
-        // THE VIEW, map px → screen: centred on the new spots' box, as close
-        // as lets the box fill FIT of the half (and no closer than ZOOM_MAX).
+        // THE VIEW, map px → screen: centred on the box round the new spots
+        // and everything landed before (with its crew), as close as lets the
+        // box fill FIT of the half (and no closer than ZOOM_MAX) — so a small
+        // cluster, like the flags, never zooms in past the colony so far.
+        const CRW = M.CREW, framed = [...spots];
+        for (let l = 1; l < level; l++) {
+            const n = nameOf(l);
+            framed.push(...(COLONY_SPOTS[n] || []));
+            if (CRW && n === CRW.FROM) framed.push(...(COLONY_SPOTS[CRW.NAME] || []));
+        }
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        for (const [x, y, sz] of spots) {
+        for (const [x, y, sz] of framed) {
             x0 = Math.min(x0, x - sz / 2); x1 = Math.max(x1, x + sz / 2);
             y0 = Math.min(y0, y - sz / 2); y1 = Math.max(y1, y + sz / 2);
         }
@@ -2041,23 +2093,49 @@ class GameScene extends Phaser.Scene {
         // drawn in the editor's layer order (sp[3]), else by height on the map.
         const colony = this.add.container(ox, oy).setScale(z).setDepth(M.DEPTH || 45).setAlpha(0);
         this.cameras.main.ignore(colony);
-        const make = (key, sp) => {
+        // `at` keeps each item's images by name (feet at x, fy) for the marks.
+        const at = {}, had = [];
+        const make = (key, sp, n) => {
             const img = this.add.image(sp[0], 0, key).setOrigin(0.5, 1);
             img.setScale(sp[2] / Math.max(img.frame.width, img.frame.height));
-            img.y = sp[1] + img.displayHeight / 2;
+            // The mirrored copies (PAYLOAD.MIRROR), by the spot's place in its list.
+            img.setFlipX(((CONFIG.PAYLOAD || {}).MIRROR || []).includes((COLONY_SPOTS[n] || []).indexOf(sp)));
+            img.bs = img.scale;     // its scale at rest (the idle squash works from it)
+            img.y = img.fy = sp[1] + img.displayHeight / 2;
+            img.sz = sp[2];
+            img.nm = n;
             img.zo = sp[3] != null ? sp[3] : sp[1];
             colony.add(img);
+            (at[n] = at[n] || []).push(img);
             return img;
         };
-        const seen = new Set([name]);
+        const seen = new Set([name]), CR = M.CREW;
         for (let l = 1; l < level; l++) {
             const n = nameOf(l), key = payloadKey(l);
             if (seen.has(n) || !COLONY_SPOTS[n] || !this.textures.exists(key)) continue;
             seen.add(n);
-            for (const sp of COLONY_SPOTS[n]) make(key, sp);
+            had.push(n);
+            for (const sp of COLONY_SPOTS[n]) make(key, sp, n);
+            // ITS CREW, already out at their spots.
+            if (CR && n === CR.FROM && COLONY_SPOTS[CR.NAME] && this.textures.exists(CR.NAME)) {
+                had.push(CR.NAME);
+                for (const sp of COLONY_SPOTS[CR.NAME]) make(CR.NAME, sp, CR.NAME);
+                const fs = CR.FLAG && (COLONY_SPOTS[CR.FLAG] || [])[0];
+                if (fs && this.textures.exists(CR.FLAG)) { had.push(CR.FLAG); make(CR.FLAG, fs, CR.FLAG); }
+            }
         }
 
-        const land = this.landing = { ground, colony, g: this.add.graphics(), dust: [], left: 0, out: false };
+        const land = this.landing = { ground, colony, g: this.add.graphics(), dust: [], left: 0, out: false, at, name, level, make };
+        // WHAT THE CAMP HAS DONE TO THE GROUND so far, under everything on it,
+        // and its lights over it (_colonyMarks).
+        land.marks = this.add.graphics();
+        land.marks.zo = -Infinity;
+        colony.add(land.marks);
+        // THE SHADOWS, over the marks and under every item (_updateLanding).
+        land.shadows = this.add.graphics();
+        land.shadows.zo = -Infinity;
+        colony.add(land.shadows);
+        land.glow = this.add.graphics();
         land.cam = this.cameras.add(B.x, B.y, B.width, B.height).setScroll(B.x, B.y);
         this.tweens.add({ targets: [ground, colony], alpha: 1, duration: fade });
 
@@ -2066,7 +2144,7 @@ class GameScene extends Phaser.Scene {
         const key = payloadKey(level), top = (B.y - oy) / z;
         const q = M.SQUASH !== undefined ? M.SQUASH : 0.22, sqMs = M.SQUASH_MS || 90;
         if (this.textures.exists(key)) for (const sp of spots) {
-            const img = make(key, sp), y = img.y, s = img.scale;
+            const img = make(key, sp, name), y = img.y, s = img.scale;
             img.y = top;
             land.left++;
             this.tweens.add({
@@ -2074,14 +2152,25 @@ class GameScene extends Phaser.Scene {
                 delay: fade + Math.random() * (M.MAX_DELAY !== undefined ? M.MAX_DELAY : 1000),
                 duration: M.FALL_MS || 650, ease: 'Quad.In',
                 onComplete: () => {
-                    this._landingDust(sp[0], y, img.displayWidth / 2);
+                    this._landingDust(sp[0], y, img.displayWidth / 2, sp[2]);
                     this.tweens.add({ targets: img, scaleY: s * (1 - q), scaleX: s * (1 + q / 2),
                         duration: sqMs, yoyo: true, ease: 'Quad.Out' });
-                    if (--land.left === 0) this.time.delayedCall(2 * sqMs + (M.HOLD_MS || 1000), () => this._endLanding());
+                    // ALL DOWN: once the squash settles, what the item does,
+                    // and back to Earth when that's over.
+                    if (--land.left === 0) this.time.delayedCall(2 * sqMs, () => {
+                        if (this.landing !== land) return;
+                        const ms = this._landingReact();
+                        this.time.delayedCall(Math.max(((M.REACT || {}).HOLD_MS || 1000), ms), () => {
+                            if (this.landing !== land) return;
+                            this.time.delayedCall(this._landingBanner(), () => this._endLanding());
+                        });
+                    });
                 },
             });
         }
         colony.list.sort((a, b) => a.zo - b.zo);
+        for (const n of had) this._colonyMarks(land.marks, n);
+        colony.add(land.glow);  // the lights, over them all
         colony.add(land.g);     // the dust, over them all
         if (!land.left) this.time.delayedCall(fade + (M.HOLD_MS || 1000), () => this._endLanding());
         this._landingCamFilter();
@@ -2090,11 +2179,12 @@ class GameScene extends Phaser.Scene {
 
     // A few soft puffs from under its feet, out along the ground both ways,
     // fading fast. Map px, drawn into the colony.
-    _landingDust(x, y, hw) {
+    _landingDust(x, y, hw, sz) {
         const l = this.landing, D = (CONFIG.MARS || {}).DUST || {};
         if (!l) return;
-        const cols = D.COLORS || ['#DB6C35'], sp = D.SPEED || 260, size = D.SIZE || 14, ttl = D.TTL || 380;
-        for (let j = 0; j < (D.COUNT || 9); j++) {
+        const k = Math.max(0.5, (sz || D.REF || 100) / (D.REF || 100));    // bigger item, bigger puff
+        const cols = D.COLORS || ['#DB6C35'], sp = (D.SPEED || 260) * k, size = (D.SIZE || 14) * k, ttl = D.TTL || 380;
+        for (let j = 0; j < Math.ceil((D.COUNT || 9) * k); j++) {
             const side = j % 2 ? 1 : -1;
             l.dust.push({
                 x: x + side * Math.random() * hw * 0.6, y: y - Math.random() * size * 0.5,
@@ -2111,6 +2201,44 @@ class GameScene extends Phaser.Scene {
         if (!l) return;
         this._landingCamFilter();
         l.g.clear();
+        // CONFETTI: gravity, air, and a flip (its width swings with the spin).
+        if (l.confetti && l.cg) {
+            const C = (((CONFIG.MARS || {}).BANNER || {}).CONFETTI) || {}, sc = this.layoutConfig.platformScale;
+            const grav = (C.GRAVITY !== undefined ? C.GRAVITY : 1300) * sc, maxY = this.scale.height + 40;
+            l.cg.clear();
+            for (const p of l.confetti) {
+                p.vy += grav * dt; p.vx *= 0.985; p.vy = Math.min(p.vy, 380 * sc);   // drifts down, not drops
+                p.x += p.vx * dt + Math.sin(p.spin) * 30 * sc * dt; p.y += p.vy * dt;
+                p.spin += p.rate * dt;
+                const fw = p.w * Math.abs(Math.cos(p.spin));
+                l.cg.fillStyle(p.c, 1);
+                l.cg.fillRect(p.x - fw / 2, p.y - p.h / 2, Math.max(1, fw), p.h);
+            }
+            l.confetti = l.confetti.filter((p) => p.y < maxY);
+        }
+        // THE CREW BREATHES while it stands: a slow squash on its feet, each
+        // out of step with the others.
+        const CR = (CONFIG.MARS || {}).CREW || {}, q = CR.IDLE_SQUASH !== undefined ? CR.IDLE_SQUASH : 0.05;
+        if (q) for (const img of l.at[CR.NAME] || []) {
+            if (img.busy) continue;
+            const b = 0.5 + 0.5 * Math.sin(this.time.now * Math.PI * 2 / (CR.IDLE_MS || 1100) + img.x * 0.05);
+            img.setScale(img.bs * (1 + q / 2 * b), img.bs * (1 - q * b));
+        }
+        // SHADOWS on the ground under each one's feet (gy while it hops, else
+        // fy): one flat oval.
+        const S = (CONFIG.MARS || {}).SHADOW || {}, sh = l.shadows, sc = hexColor(S.COLOR || '#3A1608');
+        sh.clear();
+        for (const n in l.at) for (const img of l.at[n]) {
+            if (img.noShadow) continue;     // standing up on its craft
+            const gy = img.gy !== undefined ? img.gy : img.fy;
+            const up = Math.max(0, Math.min(1, (gy - img.y) / (img.sz * (S.LIFT || 1.5))));
+            const I = (S.BY_ITEM || {})[img.nm] || {};
+            const w = img.displayWidth * (I.WIDTH || S.WIDTH || 0.8) * (1 - 0.5 * up), a = (S.ALPHA || 0.35) * (1 - up) * img.alpha;
+            if (a <= 0) continue;
+            const cy = gy - img.displayHeight * (I.RAISE !== undefined ? I.RAISE : (S.RAISE || 0));
+            sh.fillStyle(sc, a);
+            sh.fillEllipse(img.x, cy, w, w * (I.FLAT || S.FLAT || 0.28));
+        }
         for (const d of l.dust) {
             d.life += dt * 1000;
             d.x += d.vx * dt; d.y += d.vy * dt;
@@ -2119,6 +2247,284 @@ class GameScene extends Phaser.Scene {
             if (k < 1) { l.g.fillStyle(d.c, 0.7 * (1 - k)); l.g.fillCircle(d.x, d.y, d.r * (1 + k)); }
         }
         l.dust = l.dust.filter(d => d.life < d.ttl);
+        // POWER running down the cables, panel to dome, while the dusk lasts.
+        if (l.flow) {
+            const t = this.time.now / 1000, c = hexColor(((CONFIG.MARS || {}).REACT || {}).GLOW || '#FFD27A');
+            // A GLOW, not dots: the whole cable lit faintly and breathing, and
+            // soft pulses running down it, each a fading trail of layered halos.
+            const breathe = 0.75 + 0.25 * Math.sin(t * 6);
+            for (const [x1, y1, x2, y2] of l.flow) {
+                l.g.lineStyle(22, c, 0.08 * breathe); l.g.lineBetween(x1, y1, x2, y2);
+                l.g.lineStyle(9, c, 0.22 * breathe);  l.g.lineBetween(x1, y1, x2, y2);
+                for (let j = 0; j < 3; j++) {
+                    const head = (t * 0.7 + j / 3) % 1;
+                    for (let s = 0; s < 8; s++) {
+                        const k = head - s * 0.025;
+                        if (k < 0) break;
+                        const x = x1 + (x2 - x1) * k, y = y1 + (y2 - y1) * k, f = 1 - s / 8;
+                        l.g.fillStyle(c, 0.06 * f); l.g.fillCircle(x, y, 26 * f);
+                        l.g.fillStyle(c, 0.14 * f); l.g.fillCircle(x, y, 15 * f);
+                        l.g.fillStyle(0xFFFFFF, 0.35 * f * f); l.g.fillCircle(x, y, 5 * f);
+                    }
+                }
+            }
+        }
+    }
+
+    // THE MARKS one item leaves on the camp for good: footprints, the camp's
+    // edge, paths, cables and lit domes, pipes, wet ground and a sprout.
+    // Map px into g; lights into the landing's glow. Redrawn each landing
+    // from where things stand, so the camp looks lived in.
+    _colonyMarks(g, n, opt = {}) {
+        const l = this.landing, R = (CONFIG.MARS || {}).REACT || {};
+        const at = l.at, own = at[n] || [], domes = at['dome'] || [];
+        const col = (k, d) => hexColor(R[k] || d);
+        const near = (p, list) => {
+            let b = null, bd = Infinity;
+            for (const q of list) { const d = Math.hypot(q.x - p.x, q.fy - p.fy); if (d < bd) { bd = d; b = q; } }
+            return b;
+        };
+        const all = [].concat(...Object.values(at));
+        const cx = all.reduce((s, q) => s + q.x, 0) / all.length, cy = all.reduce((s, q) => s + q.fy, 0) / all.length;
+
+        if (n === ((CONFIG.MARS || {}).CREW || {}).NAME) {
+            own.forEach((img, i) => {
+                for (const p of this._crewWalk(img, i).slice(0, -1)) this._footprint(g, p.x, p.y, img.sz);
+            });
+        } else if (n === 'flag') {
+            // THE CAMP'S EDGE: a dashed ring round everything there so far.
+            let rx = 0, ry = 0;
+            for (const q of all) { rx = Math.max(rx, Math.abs(q.x - cx) + q.sz * 0.6); ry = Math.max(ry, Math.abs(q.fy - cy) + q.sz * 0.4); }
+            g.lineStyle(6, col('CLAIM', '#F6B07A'), 0.7);
+            const N = 56;
+            for (let i = 0; i < N; i++) {
+                const a0 = i / N * Math.PI * 2, a1 = a0 + Math.PI / N;
+                g.lineBetween(cx + rx * Math.cos(a0), cy + ry * Math.sin(a0), cx + rx * Math.cos(a1), cy + ry * Math.sin(a1));
+            }
+        } else if (n === 'dome') {
+            // PATHS from each dome's door to a little square in the middle.
+            const c = col('PATH', '#C05A2B'), w = (own[0] ? own[0].sz : 200) * 0.1;
+            g.fillStyle(c, 0.45);
+            g.fillEllipse(cx, cy, w * 5, w * 2.6);
+            g.lineStyle(w, c, 0.45);
+            for (const d of own) g.lineBetween(d.x, d.fy, cx, cy);
+        } else if (n === 'solar-panels') {
+            g.lineStyle(5, col('CABLE', '#3B3446'), 0.8);
+            for (const p of own) { const d = near(p, domes); if (d) g.lineBetween(p.x, p.fy, d.x, d.fy); }
+            if (!opt.dark) for (const d of domes) this._domeGlow(l.glow, d, 0.18);
+        } else if (n === 'water-tower') {
+            for (const t of own) {
+                g.fillStyle(col('MARK', '#A9461F'), 0.3);
+                g.fillEllipse(t.x, t.fy, t.sz * 0.6, t.sz * 0.18);
+                const d = near(t, domes);
+                if (!d) continue;
+                g.lineStyle(9, col('PIPE', '#9FB3C0'), 1);
+                g.lineBetween(t.x, t.fy, d.x, d.fy);
+                g.lineStyle(3, 0xFFFFFF, 0.5);
+                g.lineBetween(t.x, t.fy - 2, d.x, d.fy - 2);
+            }
+            if (own[0] && !opt.noSprout) this._sprout(g, own[0].x + own[0].sz * 0.45, own[0].fy + 6, own[0].sz);
+        }
+    }
+
+    // Crew member i's walk out of craft i (by spot order; the last craft if
+    // there are fewer): its door, just in front of the craft's feet, then
+    // where each hop lands, the last at its own spot. The same every time,
+    // so the footprints are redrawn where they were made.
+    // The first one goes by the flag's spot, standing at its pole to plant
+    // it (`plantAt`: that point's index in the walk).
+    _crewWalk(img, i) {
+        const M = CONFIG.MARS || {}, R = M.REACT || {}, CR = M.CREW || {};
+        const crafts = this.landing.at[CR.FROM] || [];
+        const c = crafts[Math.min(i, crafts.length - 1)];
+        if (!c) return [{ x: img.x, y: img.fy }];
+        const out = [{ x: c.x, y: c.fy + img.sz * 0.1 }];
+        const leg = (x, y) => {
+            const a = out[out.length - 1], n = Math.max(1, Math.min(CR.MAX_HOPS || 4,
+                Math.round(Math.hypot(x - a.x, y - a.y) / (img.sz * (R.HOP_STEP || 0.3)))));
+            for (let j = 1; j <= n; j++) out.push({ x: a.x + (x - a.x) * j / n, y: a.y + (y - a.y) * j / n });
+        };
+        const fs = i === 0 && CR.FLAG && (COLONY_SPOTS[CR.FLAG] || [])[0];
+        if (fs && this.textures.exists(CR.FLAG)) {
+            const f = this.textures.getFrame(CR.FLAG), k = fs[2] / Math.max(f.width, f.height);
+            leg(fs[0] - f.width * k / 2 - img.sz * 0.2, fs[1] + f.height * k / 2);    // beside its pole (the picture's left edge)
+            out.plantAt = out.length - 1;
+        }
+        leg(img.x, img.fy);
+        return out;
+    }
+
+    // The first crew member, at the pole: the flag rises out of the ground
+    // with a puff, then flutters. Stays (redrawn with the colony after).
+    _plantFlag() {
+        const l = this.landing, CR = (CONFIG.MARS || {}).CREW || {};
+        const fs = l && CR.FLAG && (COLONY_SPOTS[CR.FLAG] || [])[0];
+        if (!fs || !this.textures.exists(CR.FLAG)) return;
+        const img = l.make(CR.FLAG, fs, CR.FLAG), s = img.bs;
+        l.colony.moveTo(img, l.colony.getIndex(l.glow));       // over the camp, under its lights
+        img.setScale(s, 0);
+        this._landingDust(img.x - img.displayWidth / 2, img.fy, img.displayWidth * 0.3, img.sz * 0.6);
+        this.tweens.add({ targets: img, scaleY: s, duration: CR.PLANT_MS || 450, ease: 'Back.Out',
+            onComplete: () => this.tweens.add({ targets: img, scaleX: s * 0.82, duration: 160, yoyo: true, repeat: 3, ease: 'Sine.InOut' }) });
+    }
+
+    _footprint(g, x, y, sz) {
+        const w = sz * 0.08;
+        g.fillStyle(hexColor(((CONFIG.MARS || {}).REACT || {}).MARK || '#A9461F'), 0.55);
+        g.fillEllipse(x - w * 0.6, y, w, w * 0.55);
+        g.fillEllipse(x + w * 0.6, y - w * 0.3, w, w * 0.55);
+    }
+
+    // A tiny two-leaf sprout standing at (x, y), sized from the item beside it.
+    _sprout(g, x, y, sz) {
+        const s = sz * 0.35, c = hexColor(((CONFIG.MARS || {}).REACT || {}).SPROUT || '#5FC24A');
+        g.lineStyle(s * 0.08, c, 1);
+        g.lineBetween(x, y, x, y - s * 0.35);
+        g.fillStyle(c, 1);
+        g.fillEllipse(x - s * 0.13, y - s * 0.38, s * 0.26, s * 0.12);
+        g.fillEllipse(x + s * 0.13, y - s * 0.42, s * 0.26, s * 0.12);
+    }
+
+    // A warm light on a dome, its middle a third of the way up.
+    _domeGlow(g, d, a) {
+        const c = hexColor(((CONFIG.MARS || {}).REACT || {}).GLOW || '#FFD27A');
+        const x = d.x, y = d.fy - d.displayHeight * 0.33, r = d.sz * 0.32;
+        for (let i = 0; i < 3; i++) { g.fillStyle(c, a); g.fillCircle(x, y, r * (1 - i * 0.28)); }
+    }
+
+    // ONCE THIS LEVEL'S THREE ARE DOWN: what they do, and their marks
+    // appearing. Returns how long it takes, ms.
+    _landingReact() {
+        const l = this.landing, R = (CONFIG.MARS || {}).REACT || {};
+        if (!l) return 0;
+        const n = l.name, own = l.at[n] || [], colony = l.colony;
+        const fresh = this.add.graphics().setAlpha(0);
+        fresh.zo = -Infinity;
+        colony.addAt(fresh, 1);         // just over the older marks
+        const fadeIn = (ms) => this.tweens.add({ targets: fresh, alpha: 1, duration: ms });
+
+        const CR = (CONFIG.MARS || {}).CREW || {};
+        if (n === CR.FROM && COLONY_SPOTS[CR.NAME] && this.textures.exists(CR.NAME)) {
+            // THE CREW, a beat after the landing, one after another: shows at
+            // its craft's hatch, jumps down to the ground in front of it (its
+            // shadow on the ground, growing as it drops), lands with a squash,
+            // and hops to its spot, a footprint pair where each hop lands.
+            fresh.setAlpha(1);
+            const ms = R.HOP_MS || 520, rest = R.HOP_PAUSE !== undefined ? R.HOP_PAUSE : 220;
+            const wait = CR.DELAY_MS !== undefined ? CR.DELAY_MS : 1000, gap = CR.GAP_MS || 450;
+            const appear = CR.APPEAR_MS || 150, jump = CR.JUMP_MS || 550, sqMs = (CONFIG.MARS || {}).SQUASH_MS || 90;
+            const plant = CR.PLANT_MS || 450;
+            // THE FLAG'S TIME: FLAG_DELAY_MS after its planter (the first one) is down.
+            const t0 = this.time.now;
+            const plantT = wait + appear + jump + 2 * sqMs + (CR.FLAG_DELAY_MS !== undefined ? CR.FLAG_DELAY_MS : 1000);
+            let end = 0;
+            COLONY_SPOTS[CR.NAME].forEach((sp, i) => {
+                const img = l.make(CR.NAME, sp, CR.NAME), s = img.scale;
+                const craft = (l.at[CR.FROM] || [])[i];
+                if (craft) colony.moveTo(img, colony.getIndex(craft) + 1);     // in front of its own craft
+                else colony.moveTo(img, colony.getIndex(l.glow));
+                const walk = this._crewWalk(img, i), door = walk[0];
+                const hy = craft ? craft.fy - craft.displayHeight * (CR.HATCH !== undefined ? CR.HATCH : 0.45) : door.y;
+                img.setPosition(door.x, hy).setAlpha(0);
+                img.gy = door.y;
+                img.noShadow = true;
+                img.busy = true;        // no idle squash while it jumps and walks
+                let k = 1;
+                const one = () => {
+                    if (this.landing !== l) return;
+                    if (k >= walk.length) { img.busy = false; return; }
+                    const p = walk[k], last = k === walk.length - 1;
+                    const sx = img.x, sy = img.gy, h = img.sz * (R.HOP_H !== undefined ? R.HOP_H : 0.1), o = { p: 0 };
+                    this.tweens.add({ targets: o, p: 1, duration: ms, delay: rest, ease: 'Sine.InOut',
+                        onUpdate: () => { img.x = sx + (p.x - sx) * o.p; img.gy = sy + (p.y - sy) * o.p; img.y = img.gy - Math.sin(Math.PI * o.p) * h; },
+                        onComplete: () => {
+                            if (!last) this._footprint(fresh, p.x, p.y, img.sz);
+                            if (k++ === walk.plantAt) this.time.delayedCall(Math.max(0, t0 + plantT - this.time.now), () => {
+                                if (this.landing !== l) return;
+                                this._plantFlag();
+                                this.time.delayedCall(plant, one);
+                            });
+                            else one();
+                        } });
+                };
+                const jh = img.sz * (CR.JUMP_H !== undefined ? CR.JUMP_H : 0.2), o = { p: 0 };
+                const down = () => (img.noShadow = false, this.tweens.add({ targets: o, p: 1, duration: jump,
+                    onUpdate: () => { img.y = hy + (door.y - hy) * o.p * o.p - Math.sin(Math.PI * o.p) * jh; },
+                    onComplete: () => {
+                        if (this.landing !== l) return;
+                        img.y = door.y;
+                        this._landingDust(door.x, door.y, img.displayWidth / 2, img.sz);
+                        this.tweens.add({ targets: img, scaleY: s * 0.8, scaleX: s * 1.1, duration: sqMs,
+                            yoyo: true, ease: 'Quad.Out', onComplete: one });
+                    } }));
+                this.tweens.add({ targets: img, alpha: 1, delay: wait + i * gap, duration: appear, onComplete: down });
+                const landT = wait + i * gap + appear + jump + 2 * sqMs;
+                end = Math.max(end, walk.plantAt === undefined ? landT + (walk.length - 1) * (ms + rest)
+                    : Math.max(landT + walk.plantAt * (ms + rest), plantT) + plant + (walk.length - 1 - walk.plantAt) * (ms + rest));
+            });
+            return end + 300;
+        }
+        if (n === 'flag') {
+            this._colonyMarks(fresh, n);
+            fadeIn(700);
+            for (const img of own) this.tweens.add({ targets: img, scaleX: img.scaleX * 0.82,
+                duration: 160, yoyo: true, repeat: 3, ease: 'Sine.InOut' });
+            return 1400;
+        }
+        if (n === 'solar-panels') {
+            // DUSK, power running down the cables, the domes lighting one by
+            // one; then day again, the domes keeping a faint glow.
+            const dark = R.DUSK_MS || 1400, dIn = 500, dOut = 600;
+            this._colonyMarks(fresh, n, { dark: true });
+            fadeIn(400);
+            const dusk = this.add.graphics().setAlpha(0);
+            dusk.fillStyle(hexColor(R.DUSK || '#1A1440'), 1);
+            dusk.fillRect(-2048, -2048, 6144, 6144);
+            colony.add(dusk);
+            colony.bringToTop(l.glow);
+            colony.bringToTop(l.g);
+            this.tweens.add({ targets: dusk, alpha: R.DUSK_ALPHA || 0.6, duration: dIn });
+            const domes = l.at['dome'] || [], lights = [];
+            this.time.delayedCall(dIn, () => {
+                if (this.landing !== l) return;
+                l.flow = [];
+                for (const p of own) {
+                    let d = null, bd = Infinity;
+                    for (const q of domes) { const dd = Math.hypot(q.x - p.x, q.fy - p.fy); if (dd < bd) { bd = dd; d = q; } }
+                    if (d) l.flow.push([p.x, p.fy, d.x, d.fy]);
+                }
+                domes.forEach((d, i) => {
+                    const lg = this.add.graphics().setAlpha(0);
+                    this._domeGlow(lg, d, 0.35);
+                    colony.add(lg);
+                    colony.bringToTop(l.g);
+                    lights.push(lg);
+                    this.tweens.add({ targets: lg, alpha: 1, delay: 250 + i * 250, duration: 250 });
+                });
+            });
+            this.time.delayedCall(dIn + dark, () => {
+                if (this.landing !== l) return;
+                l.flow = null;
+                this.tweens.add({ targets: [dusk, ...lights], alpha: 0, duration: dOut });
+                for (const d of domes) this._domeGlow(l.glow, d, 0.18);
+            });
+            return dIn + dark + dOut;
+        }
+        if (n === 'water-tower') {
+            this._colonyMarks(fresh, n, { noSprout: true });
+            fadeIn(600);
+            if (own[0]) {
+                const sp = this.add.graphics().setPosition(own[0].x + own[0].sz * 0.45, own[0].fy + 6).setScale(0);
+                sp.zo = -Infinity;
+                this._sprout(sp, 0, 0, own[0].sz);
+                colony.addAt(sp, 2);
+                this.tweens.add({ targets: sp, scale: 1, delay: 600, duration: 400, ease: 'Back.Out' });
+            }
+            return 1500;
+        }
+        this._colonyMarks(fresh, n);
+        fadeIn(600);
+        return 800;
     }
 
     // As _flightCamFilter: the half's camera draws the Mars ground and the
@@ -2132,6 +2538,53 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    // THE BANNER for the level that just landed (MARS.BANNER.TEXTS), if it
+    // has one: a ribbon popping in over the half, and a burst of confetti
+    // from behind it. Returns how long to hold it, ms (0: none).
+    _landingBanner() {
+        const l = this.landing, BN = (CONFIG.MARS || {}).BANNER || {};
+        const text = l && (BN.TEXTS || {})[l.level];
+        if (!text) return 0;
+        const v = (x, d) => (x !== undefined ? x : d);
+        const B = this.layoutConfig.partB, sc = this.layoutConfig.platformScale;
+        const cx = B.x + B.width / 2, cy = B.y + B.height * v(BN.Y, 0.32), depth = v(BN.DEPTH, 160);
+        const t = this.add.text(0, 0, text, {
+            fontSize: Math.max(10, Math.round(v(BN.SIZE, 60) * sc)) + 'px',
+            fontFamily: CONFIG.FONT_FAMILY, fontStyle: CONFIG.FONT_WEIGHT,
+            color: BN.COLOR || '#FFFFFF', stroke: BN.STROKE || '#7A2E10',
+            strokeThickness: Math.round(v(BN.STROKE_W, 8) * sc),
+        }).setOrigin(0.5);
+        // THE RIBBON: notched tails tucked behind, then the band.
+        const w = t.width + 90 * sc, h = t.height + 20 * sc, g = this.add.graphics();
+        g.fillStyle(hexColor(BN.RIBBON_EDGE || '#A63A17'), 1);
+        for (const d of [-1, 1]) {
+            const x0 = d * (w / 2 - h * 0.35), x1 = d * (w / 2 + h * 0.75), y0 = -h * 0.25, y1 = h * 0.75;
+            g.fillPoints([{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: d * (w / 2 + h * 0.45), y: (y0 + y1) / 2 },
+                          { x: x1, y: y1 }, { x: x0, y: y1 }], true);
+        }
+        g.fillStyle(hexColor(BN.RIBBON || '#E8572A'), 1);
+        g.fillRoundedRect(-w / 2, -h / 2, w, h, h * 0.18);
+        g.fillStyle(0xFFFFFF, 0.18);
+        g.fillRoundedRect(-w / 2 + 6 * sc, -h / 2 + 5 * sc, w - 12 * sc, h * 0.3, h * 0.12);
+        l.banner = this.add.container(cx, cy, [g, t]).setDepth(depth).setScale(0);
+        this.tweens.add({ targets: l.banner, scale: 1, duration: v(BN.POP_MS, 420), ease: 'Back.Out' });
+
+        // THE CONFETTI: up and out from the ribbon, then falling and fluttering
+        // (_updateLanding), in screen px.
+        const C = BN.CONFETTI || {}, cols = C.COLORS || ['#FFD54F'];
+        l.cg = this.add.graphics().setDepth(depth - 1);
+        l.confetti = [];
+        for (let i = 0; i < v(C.COUNT, 110); i++) {
+            const a = -Math.PI / 2 + (Math.random() * 2 - 1) * 1.1, sp = v(C.SPEED, 900) * sc * (0.4 + 0.6 * Math.random());
+            const len = v(C.SIZE, 16) * sc * (0.6 + 0.6 * Math.random());
+            l.confetti.push({ x: cx + (Math.random() - 0.5) * w * 0.8, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                w: len, h: len * 0.5, spin: Math.random() * 6, rate: 6 + Math.random() * 10,
+                c: hexColor(cols[i % cols.length]) });
+        }
+        this._landingCamFilter();
+        return v(BN.MS, 2600);
+    }
+
     // Back to Earth: Mars fades off the stage and the next level's payloads
     // drop onto the springs, as at the flight's end.
     _endLanding() {
@@ -2139,10 +2592,12 @@ class GameScene extends Phaser.Scene {
         if (!l || l.out) return;
         l.out = true;
         this.tweens.add({
-            targets: [l.ground, l.colony], alpha: 0, duration: (CONFIG.MARS || {}).FADE_MS || 250,
+            targets: [l.ground, l.colony, l.banner, l.cg].filter(Boolean), alpha: 0, duration: (CONFIG.MARS || {}).FADE_MS || 250,
             onComplete: () => {
                 for (const o of l.colony.list) this.tweens.killTweensOf(o);
                 l.ground.destroy(); l.colony.destroy();
+                if (l.banner) { this.tweens.killTweensOf(l.banner); l.banner.destroy(); }
+                if (l.cg) l.cg.destroy();
                 this.cameras.remove(l.cam);
                 this.landing = null;
                 this.springs.forEach((s, i) => {

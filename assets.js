@@ -60,6 +60,10 @@ function sharedAssets() {
     // Few and small, so all of them load up front.
     (CONFIG.PAYLOAD && CONFIG.PAYLOAD.FILES || []).forEach((f, i) =>
         A.image(`payload_${i + 1}`, `graphics/payload/${f}.webp`));
+    // The crew that walks out of the landed spacecraft (MARS.CREW, no level of its own).
+    const crew = CONFIG.MARS && CONFIG.MARS.CREW;
+    if (crew) A.image(crew.NAME, `graphics/payload/${crew.NAME}.webp`);
+    if (crew && crew.FLAG) A.image(crew.FLAG, `graphics/payload/${crew.FLAG}.webp`);
     // The Mars ground the landing tiles over the stage (see _startLanding).
     A.image('mars_ground', 'graphics/mars/mars_ground.webp');
     return A.list();
