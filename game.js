@@ -1098,7 +1098,13 @@ class GameScene extends Phaser.Scene {
         this.cameras.main.ignore(this.flightGfx);
         // A launch in flight is never relaid (it holds the relayout with its
         // tweens), so every spring not letting go gets its payload back here.
-        this.payloads = this.springs.map((s, i) => (s.phase === 'releasing' ? null : this._makePayload(i, false)));
+        // Set down onto the springs the first time; a relayout just puts them back.
+        const first = !this._payloadsShown;
+        this._payloadsShown = true;
+        // The first time, after the loading screen has faded (it covers the
+        // game for a moment after create), or the drop plays unseen.
+        const wait = first ? v((CONFIG.PAYLOAD || {}).FIRST_DROP_DELAY, 900) : 0;
+        this.payloads = this.springs.map((s, i) => (s.phase === 'releasing' ? null : this._makePayload(i, first, wait)));
         this.springLabels = xs.map((x) => this.add.text(x, labelY, '', style).setOrigin(0.5, 1).setDepth(5));
         // THE ITEM'S NAME, top centre of the half, as UI over all of it.
         // "Launch N" over it, smaller.
@@ -1714,7 +1720,7 @@ class GameScene extends Phaser.Scene {
 
     // Spring i's payload for the current level, sized to the spring. _drawSpring
     // seats it on the top plate every frame; `drop` brings it in from above.
-    _makePayload(i, drop) {
+    _makePayload(i, drop, delay = 0) {
         const PL = CONFIG.PAYLOAD || {}, G = this.springGeo;
         const key = payloadKey(this.level);
         if (!G || !this.textures.exists(key)) return null;
@@ -1729,9 +1735,21 @@ class GameScene extends Phaser.Scene {
         img.setScale((PL.SIZE || 120) * G.k / Math.max(src.width, src.height));
         img.dropOff = 0;
         if (drop) {
-            img.dropOff = -(PL.DROP_PX || 120) * G.k;
+            // SET DOWN from a little above; its weight dips the top plate a
+            // touch and the stiff spring takes it straight back. The dip lives
+            // on its own object (s.seat): _stepSpring kills the spring's tweens.
+            img.dropOff = -(PL.DROP_PX !== undefined ? PL.DROP_PX : 40) * G.k;
             img.setAlpha(0);
-            this.tweens.add({ targets: img, dropOff: 0, alpha: 1, duration: PL.DROP_MS || 500, ease: 'Bounce.Out' });
+            this.tweens.add({ targets: img, alpha: 1, delay, duration: 120 });
+            this.tweens.add({ targets: img, dropOff: 0, delay, duration: PL.DROP_MS || 280, ease: 'Quad.In',
+                onComplete: () => {
+                    const s = this.springs[i];
+                    if (!s) return;
+                    const seat = s.seat = s.seat || { v: 0 }, ms = PL.SEAT_MS || 260;
+                    this.tweens.killTweensOf(seat);
+                    this.tweens.add({ targets: seat, v: PL.SEAT_DIP !== undefined ? PL.SEAT_DIP : 7, duration: ms * 0.3, ease: 'Quad.Out',
+                        onComplete: () => this.tweens.add({ targets: seat, v: 0, duration: ms * 0.7, ease: 'Sine.Out' }) });
+                } });
         }
         return img;
     }
@@ -2120,8 +2138,8 @@ class GameScene extends Phaser.Scene {
             if (CR && n === CR.FROM && COLONY_SPOTS[CR.NAME] && this.textures.exists(CR.NAME)) {
                 had.push(CR.NAME);
                 for (const sp of COLONY_SPOTS[CR.NAME]) make(CR.NAME, sp, CR.NAME);
-                const fs = CR.FLAG && (COLONY_SPOTS[CR.FLAG] || [])[0];
-                if (fs && this.textures.exists(CR.FLAG)) { had.push(CR.FLAG); make(CR.FLAG, fs, CR.FLAG); }
+                const fsp = this._flagSpot((at[CR.FROM] || [])[0], ((COLONY_SPOTS[CR.NAME] || [])[0] || [])[2] || 90);
+                if (fsp) { had.push(CR.FLAG); make(CR.FLAG, fsp, CR.FLAG); }
             }
         }
 
@@ -2331,8 +2349,6 @@ class GameScene extends Phaser.Scene {
     // there are fewer): its door, just in front of the craft's feet, then
     // where each hop lands, the last at its own spot. The same every time,
     // so the footprints are redrawn where they were made.
-    // The first one goes by the flag's spot, standing at its pole to plant
-    // it (`plantAt`: that point's index in the walk).
     _crewWalk(img, i) {
         const M = CONFIG.MARS || {}, R = M.REACT || {}, CR = M.CREW || {};
         const crafts = this.landing.at[CR.FROM] || [];
@@ -2344,28 +2360,34 @@ class GameScene extends Phaser.Scene {
                 Math.round(Math.hypot(x - a.x, y - a.y) / (img.sz * (R.HOP_STEP || 0.3)))));
             for (let j = 1; j <= n; j++) out.push({ x: a.x + (x - a.x) * j / n, y: a.y + (y - a.y) * j / n });
         };
-        const fs = i === 0 && CR.FLAG && (COLONY_SPOTS[CR.FLAG] || [])[0];
-        if (fs && this.textures.exists(CR.FLAG)) {
-            const f = this.textures.getFrame(CR.FLAG), k = fs[2] / Math.max(f.width, f.height);
-            leg(fs[0] - f.width * k / 2 - img.sz * 0.2, fs[1] + f.height * k / 2);    // beside its pole (the picture's left edge)
-            out.plantAt = out.length - 1;
-        }
         leg(img.x, img.fy);
         return out;
     }
 
-    // The first crew member, at the pole: the flag rises out of the ground
-    // with a puff, then flutters. Stays (redrawn with the colony after).
-    _plantFlag() {
+    // WHERE THE FLAG STANDS: planted by the first crew member where it lands,
+    // in front of the first craft — its pole (the picture's left edge) just
+    // right of it. A spot [x, y, size] as COLONY_SPOTS has them (size:
+    // CREW.FLAG_SIZE). Null with no craft or picture.
+    _flagSpot(craft, crewSz) {
+        const CR = (CONFIG.MARS || {}).CREW || {};
+        if (!craft || !CR.FLAG || !this.textures.exists(CR.FLAG)) return null;
+        const size = CR.FLAG_SIZE || 90;
+        const f = this.textures.getFrame(CR.FLAG), k = size / Math.max(f.width, f.height);
+        const poleX = craft.x + crewSz * (CR.FLAG_SIDE !== undefined ? CR.FLAG_SIDE : 0.35), feetY = craft.fy + crewSz * 0.1;
+        return [poleX + f.width * k / 2, feetY - f.height * k / 2, size];
+    }
+
+    // Beside the first crew member: the flag appears with a puff and a small
+    // pop. Stays (redrawn with the colony after).
+    _plantFlag(crewSz) {
         const l = this.landing, CR = (CONFIG.MARS || {}).CREW || {};
-        const fs = l && CR.FLAG && (COLONY_SPOTS[CR.FLAG] || [])[0];
-        if (!fs || !this.textures.exists(CR.FLAG)) return;
+        const fs = l && this._flagSpot((l.at[CR.FROM] || [])[0], crewSz);
+        if (!fs) return;
         const img = l.make(CR.FLAG, fs, CR.FLAG), s = img.bs;
         l.colony.moveTo(img, l.colony.getIndex(l.glow));       // over the camp, under its lights
-        img.setScale(s, 0);
         this._landingDust(img.x - img.displayWidth / 2, img.fy, img.displayWidth * 0.3, img.sz * 0.6);
-        this.tweens.add({ targets: img, scaleY: s, duration: CR.PLANT_MS || 450, ease: 'Back.Out',
-            onComplete: () => this.tweens.add({ targets: img, scaleX: s * 0.82, duration: 160, yoyo: true, repeat: 3, ease: 'Sine.InOut' }) });
+        // Just a small pop: up a little and back.
+        this.tweens.add({ targets: img, scale: s * 1.12, duration: (CR.PLANT_MS || 450) / 2, yoyo: true, ease: 'Sine.InOut' });
     }
 
     _footprint(g, x, y, sz) {
@@ -2414,9 +2436,9 @@ class GameScene extends Phaser.Scene {
             const wait = CR.DELAY_MS !== undefined ? CR.DELAY_MS : 1000, gap = CR.GAP_MS || 450;
             const appear = CR.APPEAR_MS || 150, jump = CR.JUMP_MS || 550, sqMs = (CONFIG.MARS || {}).SQUASH_MS || 90;
             const plant = CR.PLANT_MS || 450;
-            // THE FLAG'S TIME: FLAG_DELAY_MS after its planter (the first one) is down.
-            const t0 = this.time.now;
-            const plantT = wait + appear + jump + 2 * sqMs + (CR.FLAG_DELAY_MS !== undefined ? CR.FLAG_DELAY_MS : 1000);
+            // THE FLAG: FLAG_DELAY_MS after the first one is down, beside it;
+            // it waits for the flag to be up before walking on.
+            const flagMs = CR.FLAG_DELAY_MS !== undefined ? CR.FLAG_DELAY_MS : 1000;
             let end = 0;
             COLONY_SPOTS[CR.NAME].forEach((sp, i) => {
                 const img = l.make(CR.NAME, sp, CR.NAME), s = img.scale;
@@ -2437,16 +2459,14 @@ class GameScene extends Phaser.Scene {
                     const sx = img.x, sy = img.gy, h = img.sz * (R.HOP_H !== undefined ? R.HOP_H : 0.1), o = { p: 0 };
                     this.tweens.add({ targets: o, p: 1, duration: ms, delay: rest, ease: 'Sine.InOut',
                         onUpdate: () => { img.x = sx + (p.x - sx) * o.p; img.gy = sy + (p.y - sy) * o.p; img.y = img.gy - Math.sin(Math.PI * o.p) * h; },
-                        onComplete: () => {
-                            if (!last) this._footprint(fresh, p.x, p.y, img.sz);
-                            if (k++ === walk.plantAt) this.time.delayedCall(Math.max(0, t0 + plantT - this.time.now), () => {
-                                if (this.landing !== l) return;
-                                this._plantFlag();
-                                this.time.delayedCall(plant, one);
-                            });
-                            else one();
-                        } });
+                        onComplete: () => { if (!last) this._footprint(fresh, p.x, p.y, img.sz); k++; one(); } });
                 };
+                const plants = i === 0 && !!this._flagSpot(craft, img.sz);
+                const afterSquash = !plants ? one : () => this.time.delayedCall(Math.max(0, flagMs - 2 * sqMs), () => {
+                    if (this.landing !== l) return;
+                    this._plantFlag(img.sz);
+                    this.time.delayedCall(plant, one);
+                });
                 const jh = img.sz * (CR.JUMP_H !== undefined ? CR.JUMP_H : 0.2), o = { p: 0 };
                 const down = () => (img.noShadow = false, this.tweens.add({ targets: o, p: 1, duration: jump,
                     onUpdate: () => { img.y = hy + (door.y - hy) * o.p * o.p - Math.sin(Math.PI * o.p) * jh; },
@@ -2455,12 +2475,11 @@ class GameScene extends Phaser.Scene {
                         img.y = door.y;
                         this._landingDust(door.x, door.y, img.displayWidth / 2, img.sz);
                         this.tweens.add({ targets: img, scaleY: s * 0.8, scaleX: s * 1.1, duration: sqMs,
-                            yoyo: true, ease: 'Quad.Out', onComplete: one });
+                            yoyo: true, ease: 'Quad.Out', onComplete: afterSquash });
                     } }));
                 this.tweens.add({ targets: img, alpha: 1, delay: wait + i * gap, duration: appear, onComplete: down });
-                const landT = wait + i * gap + appear + jump + 2 * sqMs;
-                end = Math.max(end, walk.plantAt === undefined ? landT + (walk.length - 1) * (ms + rest)
-                    : Math.max(landT + walk.plantAt * (ms + rest), plantT) + plant + (walk.length - 1 - walk.plantAt) * (ms + rest));
+                end = Math.max(end, wait + i * gap + appear + jump + Math.max(2 * sqMs, plants ? flagMs + plant : 0) +
+                    (walk.length - 1) * (ms + rest));
             });
             return end + 300;
         }
@@ -2637,7 +2656,8 @@ class GameScene extends Phaser.Scene {
         const t = this._springT || 0;
 
         const baseY = G.baseY;                              // top of the base plate
-        const len = rest - (rest - min) * s.squeeze;        // squeeze may dip below 0 on the overshoot
+        const len = rest - (rest - min) * s.squeeze         // squeeze may dip below 0 on the overshoot
+            - (s.seat ? s.seat.v : 0) * k;                  // a payload just set down on it (_makePayload)
         const topY = baseY - len;                           // bottom of the top plate
 
         // TENSION: the further it is squeezed the more it shivers; full, it

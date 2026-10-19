@@ -57,9 +57,7 @@
 const MAP = 2048, PER = 3;
 const FILES = CONFIG.PAYLOAD.FILES.slice();
 // The crew (MARS.CREW) is no level, but it has spots too.
-// So is the flag the crew plants (only its first spot is used).
-for (const n of [CONFIG.MARS && CONFIG.MARS.CREW && CONFIG.MARS.CREW.NAME, CONFIG.MARS && CONFIG.MARS.CREW && CONFIG.MARS.CREW.FLAG])
-    if (n && !FILES.includes(n)) FILES.push(n);
+if (CONFIG.MARS && CONFIG.MARS.CREW && !FILES.includes(CONFIG.MARS.CREW.NAME)) FILES.push(CONFIG.MARS.CREW.NAME);
 const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
 const listEl = document.getElementById('list'), statusEl = document.getElementById('status');
 

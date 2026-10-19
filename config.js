@@ -684,8 +684,11 @@ var CONFIG = {
         DEPTH:     4,            // over the springs (2) and the slots (3), under the piggies
         LAUNCH_MS: 450,          // launch tween, ms — it leaves the screen early on, fast
         LAUNCH_SPIN: 25,         // up to this much turn on the way out, degrees
-        DROP_MS:   500,          // the next one dropping onto its plate, ms
-        DROP_PX:   120,          // …from this far above, px @ spring design
+        DROP_MS:   280,          // the next one set down onto its plate (falling, no bounce), ms
+        DROP_PX:   90,           // …from this little way above, px @ spring design
+        FIRST_DROP_DELAY: 900,   // the game's first set-down waits this long, ms — the loading screen fades out over it (250 + 450 ms)
+        SEAT_DIP:  16,           // its weight pushes the top plate down this much and the spring takes it back, px @ spring design (rigid: keep small)
+        SEAT_MS:   260,          // …the whole dip and back, ms
         // "LAUNCH N" AND THE ITEM'S NAME at the top centre of the launch half, over
         // everything there (springs, payloads, the flight, Mars): the item
         // this level launches, or the one flying / landing. 'solar-panels'
@@ -805,11 +808,13 @@ var CONFIG = {
                 JUMP_H: 0.2,          // how high it springs before dropping, × its size
                 GAP_MS: 450,          // between one crew member and the next, ms
                 MAX_HOPS: 4,          // each leg of the walk takes at most this many hops (longer hops if far)
-                // THE FLAG, no level either: the first crew member walks to the
-                // flag's first COLONY_SPOTS spot on its way, plants it, then goes on.
-                FLAG: 'flag',         // graphics/payload/<name>.webp, and its COLONY_SPOTS key
-                PLANT_MS: 450,        // the flag rising out of the ground, ms (the walk waits for it)
-                FLAG_DELAY_MS: 1000,  // it rises no sooner than this after the first crew member's (its planter's) touchdown, ms (it waits at the pole)
+                // THE FLAG, no level either: the first crew member plants it
+                // where it lands, in front of the first craft, then walks on.
+                FLAG: 'flag',         // graphics/payload/<name>.webp
+                FLAG_SIZE: 90,        // its longest side, map px
+                FLAG_SIDE: 0.35,      // its pole this far right of the planter, × the crew member's size
+                PLANT_MS: 450,        // the flag's pop, up and back, ms (the walk waits for it)
+                FLAG_DELAY_MS: 1000,  // it rises this long after its planter's touchdown, ms (the planter waits for it)
                 IDLE_SQUASH: 0.05,    // standing still, it breathes: this much flatter (and half as much wider) at most
                 IDLE_MS: 1100 },      // …one breath, ms
         // A BANNER WITH CONFETTI once a landing's reaction is over (the first:
