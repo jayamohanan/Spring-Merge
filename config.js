@@ -678,6 +678,7 @@ var CONFIG = {
     PAYLOAD: {
         FILES: ['astronaut', 'flag', 'dome', 'solar-panels', 'water-tower'],  // graphics/payload/<name>.webp, level 1, 2, … (loops)
         SIZE:      240,          // longest side, px @ spring design (× the spring's scale)
+        PIVOT_X:   { 'flag': 0 }, // by file: the point across the picture (0 left .. 1 right) that stands on the plate's centre; 0.5 if not listed
         SINK:      0.4,          // how far its bottom sits into the top plate's face, fraction of the face's half-height
         DEPTH:     4,            // over the springs (2) and the slots (3), under the piggies
         LAUNCH_MS: 450,          // launch tween, ms — it leaves the screen early on, fast
@@ -705,7 +706,7 @@ var CONFIG = {
                  TOP: 0.78,      // (only before the springs exist) top of the Earth, fraction of the half's height
                  RADIUS: 1.6,    // sphere radius, × the half's width
                  HAZE: '#BFE9FF', HAZE_PX: 14,                       // air glow round the rim: three rings this wide (px @ design)
-                 OCEAN: '#2E7CC4', OCEAN_DEEP: '#225FA0',
+                 OCEAN: '#4FA3E6', OCEAN_DEEP: '#3D8ED6',
                  LAND: '#5DAA4C', SAND: '#D9C48A',
                  // Continents: [angle from the crown (radians), depth below the surface, size], × the half's width.
                  CONTINENTS: [[-0.27, 0.12, 0.07], [0.27, 0.16, 0.08], [0.02, 0.30, 0.09], [-0.16, 0.48, 0.08], [0.17, 0.62, 0.1]],
@@ -733,6 +734,33 @@ var CONFIG = {
             CRUISE_Y:  0.45,     // where they hold, fraction of the half's height from its top
             ENTER_MS:  600,      // rising into view after the cut, ms
         },
+    },
+
+    // ── THE LANDING ON MARS ──────────────────────────────────────────────────
+    // After the flight the half cuts to Mars: the colony so far (every earlier
+    // level's item at its COLONY_SPOTS spot, colonySpots.js) and this level's
+    // three falling onto theirs, then back to the springs. The whole stage's
+    // ground goes Martian meanwhile, under the grid too. An item with no spots
+    // skips it. Map px are the colony map's (2048 × 2048).
+    MARS: {
+        ENABLED:   true,
+        DEPTH:     45,           // the colony's layer in the spring half: over the flight (40), under coins and dragging
+        TILE:      512,          // the ground tile's side on the map, map px
+        FIT:       0.6,          // the new spots' box fills this much of the half (centred on them)
+        ZOOM_MAX:  1,            // closest view, screen px per map px @ design (× platformScale)
+        FADE_MS:   250,          // the cut in (as the flight ends) and back out, ms
+        FALL_MS:   433,          // each one's fall from above the screen, ms
+        MAX_DELAY: 1000,         // each one starts after a random 0..this, ms
+        HOLD_MS:   1000,         // after the last touchdown, before going back, ms
+        SQUASH:    0.22,         // touchdown squash: this much flatter (and half as much wider)
+        SQUASH_MS: 90,           // …down, and the same back up, ms
+        DUST: { COUNT: 9,        // puffs per touchdown
+                SIZE:  14,       // radius, map px (each 0.6..1.4 of it, growing as it fades)
+                SPEED: 260,      // outward, map px per second (each 0.4..1 of it)
+                TTL:   380,      // life, ms (each 0.7..1.3 of it) — Mars dust settles fast
+                // Sampled from graphics/mars/mars_ground.webp: its average colour,
+                // and the means of its darkest and lightest fifths.
+                COLORS: ['#DB6C35', '#D46532', '#E27438'] },
     },
 
     // ── THE PIGGY STEERS ─────────────────────────────────────────────────────

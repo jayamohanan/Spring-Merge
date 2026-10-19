@@ -599,6 +599,7 @@ class GameScene extends Phaser.Scene {
         if (this.isWatchingAd)    return 'an ad is playing';
         if ((this._coinFlights || 0) > 0) return 'coins in flight';
         if (this.flight)                  return 'a launch in flight';
+        if (this.landing)                 return 'a landing on Mars';
         if (this.countdown)               return 'a launch counting down';
         const t = this.tweens.getTweens().filter((tw) => !tw.isInfinite).length;
         return t ? `${t} tween(s) running` : null;
@@ -1608,7 +1609,7 @@ class GameScene extends Phaser.Scene {
                 onComplete: () => {
                     s.max = next[i]; s.compressed = 0; s.phase = 'compressing';
                     // Mid-flight, the flight's end brings them (_endFlight).
-                    if (!this.flight) this.payloads[i] = this._makePayload(i, true);
+                    if (!this.flight && !this.landing) this.payloads[i] = this._makePayload(i, true);
                 },
             });
             this._launchPayload(i);
@@ -1666,6 +1667,7 @@ class GameScene extends Phaser.Scene {
         this._stepSky(this.flight ? this.flight.speed : 0, dt);
         if (this.skyGfx && this.skyGfx.scene) { this.skyGfx.clear(); this._drawSky(this.skyGfx, 0, 0); }
         this._updateFlight(dt);
+        this._updateLanding(dt);
         this._drawSprings();
     }
 
@@ -1677,7 +1679,11 @@ class GameScene extends Phaser.Scene {
         const PL = CONFIG.PAYLOAD || {}, G = this.springGeo;
         const key = payloadKey(this.level);
         if (!G || !this.textures.exists(key)) return null;
-        const img = this.add.image(G.xs[i], G.baseY, key).setOrigin(0.5, 1).setDepth(PL.DEPTH || 4);
+        // THE PIVOT across the picture (PAYLOAD.PIVOT_X, by file): what stands
+        // on the plate's centre — a flag's pole, not the middle of its cloth.
+        const files = PL.FILES || [], file = files[(Math.max(1, this.level) - 1) % Math.max(1, files.length)];
+        const px = (PL.PIVOT_X || {})[file];
+        const img = this.add.image(G.xs[i], G.baseY, key).setOrigin(px !== undefined ? px : 0.5, 1).setDepth(PL.DEPTH || 4);
         const src = img.frame;
         img.setScale((PL.SIZE || 120) * G.k / Math.max(src.width, src.height));
         img.dropOff = 0;
@@ -1903,7 +1909,7 @@ class GameScene extends Phaser.Scene {
         const L = this.layoutConfig, B = L.partB, G = this.springGeo;
         const key = payloadKey(level);
         const g = this.flightGfx;
-        const f = this.flight = { t: 0, alt: F.START_ALT || 0.4, speed: 0, imgs: [], out: false, alpha: 0 };
+        const f = this.flight = { t: 0, level, alt: F.START_ALT || 0.4, speed: 0, imgs: [], out: false, alpha: 0 };
         this.tweens.add({ targets: f, alpha: 1, delay: F.CUT_MS || 450, duration: F.FADE_MS || 250 });
         // ITS OWN CAMERA, its viewport the spring half: what it draws cannot
         // reach the grid, whatever the renderer (a mask could, on some mobile
@@ -1957,7 +1963,10 @@ class GameScene extends Phaser.Scene {
             f.out = true;
             for (const img of f.imgs) this.tweens.add({ targets: img, by: B.y - B.height * 0.6,
                 scale: img.scale * 0.6, duration: outMs, ease: 'Cubic.In' });
-            this.tweens.add({ targets: f, alpha: 0, delay: outMs * 0.5, duration: outMs * 0.5 });
+            // ON TO MARS, if this item has a spot there: it cuts in over the
+            // flight, which ends under it. Otherwise back to the springs.
+            if (!this._startLanding(f.level))
+                this.tweens.add({ targets: f, alpha: 0, delay: outMs * 0.5, duration: outMs * 0.5 });
         }
         if (f.t >= total + 50) this._endFlight();
     }
@@ -1985,8 +1994,161 @@ class GameScene extends Phaser.Scene {
         if (f.cam) this.cameras.remove(f.cam);
         if (this.flightGfx) this.flightGfx.clear().setVisible(false);
         if (this.flightBgGfx) this.flightBgGfx.clear().setVisible(false);
+        if (this.landing) return;      // the landing's end brings them (_endLanding)
         this.springs.forEach((s, i) => {
             if (!this.payloads[i] && s.phase !== 'releasing') this.payloads[i] = this._makePayload(i, true);
+        });
+    }
+
+    // ── THE LANDING ON MARS ──────────────────────────────────────────────────
+
+    // As the flight's payloads shoot off, with the level just completed: the
+    // half cuts to the colony on Mars — every earlier level's item at its
+    // spot (COLONY_SPOTS), and this level's three falling onto theirs — and
+    // the ground behind the grid goes Martian too. False when this item has
+    // no spots: nothing lands and the flight fades back as before.
+    _startLanding(level) {
+        const M = CONFIG.MARS || {};
+        const files = (CONFIG.PAYLOAD || {}).FILES || [];
+        const nameOf = (l) => files[(Math.max(1, l) - 1) % Math.max(1, files.length)];
+        const name = nameOf(level);
+        const spots = typeof COLONY_SPOTS !== 'undefined' && COLONY_SPOTS[name];
+        if (M.ENABLED === false || !spots || !spots.length || !this.textures.exists('mars_ground')) return false;
+        const L = this.layoutConfig, B = L.partB, SW = this.scale.width, SH = this.scale.height;
+        const T = M.TILE || 512, fade = M.FADE_MS || 250;
+
+        // THE VIEW, map px → screen: centred on the new spots' box, as close
+        // as lets the box fill FIT of the half (and no closer than ZOOM_MAX).
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const [x, y, sz] of spots) {
+            x0 = Math.min(x0, x - sz / 2); x1 = Math.max(x1, x + sz / 2);
+            y0 = Math.min(y0, y - sz / 2); y1 = Math.max(y1, y + sz / 2);
+        }
+        const z = Math.min((M.ZOOM_MAX || 1) * L.platformScale,
+            (M.FIT || 0.6) * Math.min(B.width / Math.max(1, x1 - x0), B.height / Math.max(1, y1 - y0)));
+        const ox = B.x + B.width / 2 - z * (x0 + x1) / 2, oy = B.y + B.height / 2 - z * (y0 + y1) / 2;
+
+        // THE GROUND across the whole stage, just over the flight's (1.5) and
+        // under the grid; the half's own camera draws it too, so the two meet
+        // seamlessly. Tiles overlap a pixel so no seam shows between them.
+        const ground = this.add.container(ox, oy).setScale(z).setDepth(1.6).setAlpha(0);
+        for (let tx = Math.floor(-ox / z / T); tx < Math.ceil((SW - ox) / z / T); tx++)
+            for (let ty = Math.floor(-oy / z / T); ty < Math.ceil((SH - oy) / z / T); ty++)
+                ground.add(this.add.image(tx * T, ty * T, 'mars_ground').setOrigin(0).setDisplaySize(T + 1, T + 1));
+
+        // THE COLONY, in the half only (its own camera, as the flight has).
+        // Each item stands on its feet, its spot the middle of its picture;
+        // drawn in the editor's layer order (sp[3]), else by height on the map.
+        const colony = this.add.container(ox, oy).setScale(z).setDepth(M.DEPTH || 45).setAlpha(0);
+        this.cameras.main.ignore(colony);
+        const make = (key, sp) => {
+            const img = this.add.image(sp[0], 0, key).setOrigin(0.5, 1);
+            img.setScale(sp[2] / Math.max(img.frame.width, img.frame.height));
+            img.y = sp[1] + img.displayHeight / 2;
+            img.zo = sp[3] != null ? sp[3] : sp[1];
+            colony.add(img);
+            return img;
+        };
+        const seen = new Set([name]);
+        for (let l = 1; l < level; l++) {
+            const n = nameOf(l), key = payloadKey(l);
+            if (seen.has(n) || !COLONY_SPOTS[n] || !this.textures.exists(key)) continue;
+            seen.add(n);
+            for (const sp of COLONY_SPOTS[n]) make(key, sp);
+        }
+
+        const land = this.landing = { ground, colony, g: this.add.graphics(), dust: [], left: 0, out: false };
+        land.cam = this.cameras.add(B.x, B.y, B.width, B.height).setScroll(B.x, B.y);
+        this.tweens.add({ targets: [ground, colony], alpha: 1, duration: fade });
+
+        // THE NEW THREE, from above the half's top, each after its own random
+        // wait; a squash on touchdown and a puff of dust.
+        const key = payloadKey(level), top = (B.y - oy) / z;
+        const q = M.SQUASH !== undefined ? M.SQUASH : 0.22, sqMs = M.SQUASH_MS || 90;
+        if (this.textures.exists(key)) for (const sp of spots) {
+            const img = make(key, sp), y = img.y, s = img.scale;
+            img.y = top;
+            land.left++;
+            this.tweens.add({
+                targets: img, y,
+                delay: fade + Math.random() * (M.MAX_DELAY !== undefined ? M.MAX_DELAY : 1000),
+                duration: M.FALL_MS || 650, ease: 'Quad.In',
+                onComplete: () => {
+                    this._landingDust(sp[0], y, img.displayWidth / 2);
+                    this.tweens.add({ targets: img, scaleY: s * (1 - q), scaleX: s * (1 + q / 2),
+                        duration: sqMs, yoyo: true, ease: 'Quad.Out' });
+                    if (--land.left === 0) this.time.delayedCall(2 * sqMs + (M.HOLD_MS || 1000), () => this._endLanding());
+                },
+            });
+        }
+        colony.list.sort((a, b) => a.zo - b.zo);
+        colony.add(land.g);     // the dust, over them all
+        if (!land.left) this.time.delayedCall(fade + (M.HOLD_MS || 1000), () => this._endLanding());
+        this._landingCamFilter();
+        return true;
+    }
+
+    // A few soft puffs from under its feet, out along the ground both ways,
+    // fading fast. Map px, drawn into the colony.
+    _landingDust(x, y, hw) {
+        const l = this.landing, D = (CONFIG.MARS || {}).DUST || {};
+        if (!l) return;
+        const cols = D.COLORS || ['#DB6C35'], sp = D.SPEED || 260, size = D.SIZE || 14, ttl = D.TTL || 380;
+        for (let j = 0; j < (D.COUNT || 9); j++) {
+            const side = j % 2 ? 1 : -1;
+            l.dust.push({
+                x: x + side * Math.random() * hw * 0.6, y: y - Math.random() * size * 0.5,
+                vx: side * sp * (0.4 + 0.6 * Math.random()), vy: -sp * 0.15 * Math.random(),   // map px/s
+                r: size * (0.6 + 0.8 * Math.random()), life: 0, ttl: ttl * (0.7 + 0.6 * Math.random()),
+                c: hexColor(cols[j % cols.length]),
+            });
+        }
+    }
+
+    // Each frame: the dust, and what the half's camera draws.
+    _updateLanding(dt) {
+        const l = this.landing;
+        if (!l) return;
+        this._landingCamFilter();
+        l.g.clear();
+        for (const d of l.dust) {
+            d.life += dt * 1000;
+            d.x += d.vx * dt; d.y += d.vy * dt;
+            d.vx *= 0.9; d.vy *= 0.9;     // thin air, but the dust drops fast
+            const k = d.life / d.ttl;
+            if (k < 1) { l.g.fillStyle(d.c, 0.7 * (1 - k)); l.g.fillCircle(d.x, d.y, d.r * (1 + k)); }
+        }
+        l.dust = l.dust.filter(d => d.life < d.ttl);
+    }
+
+    // As _flightCamFilter: the half's camera draws the Mars ground and the
+    // colony, and anything at depth 100 or more; nothing else.
+    _landingCamFilter() {
+        const l = this.landing, cam = l && l.cam;
+        if (!cam) return;
+        for (const o of this.children.list) {
+            if (o === l.ground || o === l.colony || o.depth >= 100) o.cameraFilter &= ~cam.id;
+            else o.cameraFilter |= cam.id;
+        }
+    }
+
+    // Back to Earth: Mars fades off the stage and the next level's payloads
+    // drop onto the springs, as at the flight's end.
+    _endLanding() {
+        const l = this.landing;
+        if (!l || l.out) return;
+        l.out = true;
+        this.tweens.add({
+            targets: [l.ground, l.colony], alpha: 0, duration: (CONFIG.MARS || {}).FADE_MS || 250,
+            onComplete: () => {
+                for (const o of l.colony.list) this.tweens.killTweensOf(o);
+                l.ground.destroy(); l.colony.destroy();
+                this.cameras.remove(l.cam);
+                this.landing = null;
+                this.springs.forEach((s, i) => {
+                    if (!this.payloads[i] && s.phase !== 'releasing') this.payloads[i] = this._makePayload(i, true);
+                });
+            },
         });
     }
 
@@ -2007,7 +2169,7 @@ class GameScene extends Phaser.Scene {
             g.fillCircle(d.x, d.y, d.r * (1 + k));
         }
         // ALL FULL: count down and launch on its own.
-        if (!this.countdown && !this.flight && !this.isWatchingAd && this.springs.every(s => s.phase === 'ready'))
+        if (!this.countdown && !this.flight && !this.landing && !this.isWatchingAd && this.springs.every(s => s.phase === 'ready'))
             this._startCountdown();
     }
 

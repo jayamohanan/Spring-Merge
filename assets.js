@@ -60,6 +60,8 @@ function sharedAssets() {
     // Few and small, so all of them load up front.
     (CONFIG.PAYLOAD && CONFIG.PAYLOAD.FILES || []).forEach((f, i) =>
         A.image(`payload_${i + 1}`, `graphics/payload/${f}.webp`));
+    // The Mars ground the landing tiles over the stage (see _startLanding).
+    A.image('mars_ground', 'graphics/mars/mars_ground.webp');
     return A.list();
 }
 

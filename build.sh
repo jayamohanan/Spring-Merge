@@ -112,7 +112,7 @@ EOF
 # puts its whole program on a few lines, so an error's line number points nowhere
 # useful.
 if [ "$1" != "--no-minify" ]; then
-  for f in game.js config.js assets.js batteryChargeData.js levelData.js; do
+  for f in game.js config.js assets.js batteryChargeData.js levelData.js colonySpots.js; do
     [ -f "$OUT/$f" ] || continue
     npx --yes esbuild@0.24.0 "$OUT/$f" \
       --minify-whitespace --minify-syntax --legal-comments=none \
@@ -144,7 +144,7 @@ fi
 node - "$OUT" <<'EOF'
 const fs = require('fs'), path = require('path');
 const OUT = process.argv[2];
-const parts = ['batteryChargeData.js', 'levelData.js', 'config.js', 'assets.js', 'game.js'];
+const parts = ['batteryChargeData.js', 'levelData.js', 'colonySpots.js', 'config.js', 'assets.js', 'game.js'];
 const htmlPath = path.join(OUT, 'index.html');
 let page = fs.readFileSync(htmlPath, 'utf8');
 // Read everything first, then write: game.js is both an input and the output.

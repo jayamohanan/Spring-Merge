@@ -1,0 +1,404 @@
+<!doctype html>
+<!-- COLONY EDITOR: places the three copies of each payload item on the Mars map.
+     Not part of the game (build.sh skips tools/). Open with Live Server at
+     /tools/colony-editor.html. Writes ../colonySpots.js. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Colony Editor</title>
+<style>
+    html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; background: #1b1b1f; color: #ddd; }
+    body { display: flex; }
+    #side { width: 240px; display: flex; flex-direction: column; border-right: 1px solid #333; }
+    #top { padding: 8px; border-bottom: 1px solid #333; display: flex; flex-direction: column; gap: 6px; }
+    #top label { display: flex; align-items: center; gap: 6px; }
+    #top input[type=range] { flex: 1; }
+    #list { flex: 1; overflow: auto; }
+    .row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; border-bottom: 1px solid #262629; }
+    .row:hover { background: #26262b; }
+    .row.sel { background: #33405a; }
+    .row img { width: 36px; height: 36px; object-fit: contain; }
+    .row .nm { flex: 1; }
+    .row .ct { font-size: 15px; letter-spacing: 1px; color: #f3b35b; }
+    .row .tag { color: #888; font-size: 11px; }
+    .row.unused .nm { color: #c77; }
+    button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+    button:hover { background: #444; }
+    #help { padding: 8px; color: #888; font-size: 11px; line-height: 1.5; border-top: 1px solid #333; }
+    #status { color: #8c8; }
+    #status.dirty { color: #f3b35b; }
+    canvas { flex: 1; display: block; min-width: 0; }
+    #menu { position: fixed; display: none; background: #2a2a30; border: 1px solid #555; border-radius: 4px; padding: 3px 0; z-index: 10; }
+    #menu div { padding: 5px 16px; cursor: pointer; }
+    #menu div:hover { background: #3a4a6a; }
+    #menu div.off { color: #666; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="side">
+    <div id="top">
+        <label>New item scale <input id="scale" type="range" min="0.05" max="2" step="0.05" value="0.5"> <span id="scaleV">0.5</span></label>
+        <div style="display:flex;gap:6px;align-items:center"><button id="save">Save</button><span id="status">loaded</span></div>
+    </div>
+    <div id="list"></div>
+    <div id="help">
+        Click map: place next copy · Drag: move<br>
+        Corner handle / Shift+wheel: resize<br>
+        Right-click: duplicate / delete · Ctrl+Z: undo<br>
+        Space-drag / middle: pan · Wheel: zoom
+    </div>
+</div>
+<canvas id="cv"></canvas>
+<div id="menu"><div id="mDup">Duplicate</div><div id="mFront">Move forward one</div><div id="mBack">Move back one</div><div id="mDel">Delete</div></div>
+
+<script src="../config.js"></script>
+<script src="../colonySpots.js" onerror="void 0"></script>
+<script>
+const MAP = 2048, PER = 3;
+const FILES = CONFIG.PAYLOAD.FILES.slice();
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const listEl = document.getElementById('list'), statusEl = document.getElementById('status');
+
+// STATE: spots by item name, each [x, y, size] in map px (size = the sprite's
+// longest side, so relative sizes on the map are kept). Starts from the existing file if it loaded.
+let spots = typeof COLONY_SPOTS !== 'undefined' ? JSON.parse(JSON.stringify(COLONY_SPOTS)) : {};
+// LAYER: sp[3] is the draw order across all items (higher = in front).
+// Spots saved before layering get one in file order.
+{ let z = topZ(); for (const n in spots) for (const sp of spots[n]) if (sp[3] == null) sp[3] = ++z; }
+function topZ() { let z = -1; for (const n in spots) for (const sp of spots[n]) if (sp[3] != null) z = Math.max(z, sp[3]); return z; }
+function bottomZ() { let z = 0; for (const n in spots) for (const sp of spots[n]) z = Math.min(z, sp[3]); return z; }
+// STACK: every spot, back to front.
+function stacked() {
+    const out = [];
+    for (const n in spots) spots[n].forEach((sp, i) => out.push({ name: n, i, sp }));
+    return out.sort((a, b) => a.sp[3] - b.sp[3]);
+}
+let selected = FILES.find(n => (spots[n] || []).length < PER) || FILES[0];
+let scale = 0.5;
+let view = { x: 0, y: 0, zoom: 1 };     // map px at the canvas's top-left, screen px per map px
+const undo = [];
+let dirty = false, fileHandle = null;
+let hover = null;                        // { name, i } under the mouse
+let active = null;                       // { name, i } last clicked: shows the resize handle
+let drag = null, pan = null, sizing = null, spaceDown = false, wheelSizeAt = 0;
+
+const imgs = {};
+for (const n of FILES) { const im = new Image(); im.onload = draw; im.src = '../graphics/payload/' + n + '.webp'; imgs[n] = im; }
+const ground = new Image(); ground.onload = draw; ground.src = '../graphics/mars/mars_ground.webp';
+let groundPat = null;
+
+// ── HISTORY ──────────────────────────────────────────────────────────────
+function snapshot() { undo.push(JSON.stringify(spots)); if (undo.length > 200) undo.shift(); setDirty(true); }
+function doUndo() { if (!undo.length) return; spots = JSON.parse(undo.pop()); active = hover = null; setDirty(true); refresh(); }
+function setDirty(d) { dirty = d; statusEl.textContent = d ? 'unsaved' : 'saved'; statusEl.className = d ? 'dirty' : ''; }
+
+// ── LIST ─────────────────────────────────────────────────────────────────
+function dots(n) { return '●'.repeat(Math.min(n, PER)) + '○'.repeat(Math.max(0, PER - n)); }
+function renderList() {
+    listEl.innerHTML = '';
+    for (const n of FILES) {
+        const c = (spots[n] || []).length;
+        const row = document.createElement('div');
+        row.className = 'row' + (n === selected ? ' sel' : '');
+        row.innerHTML = `<img src="../graphics/payload/${n}.webp"><span class="nm">${n}</span>` +
+            (c ? `<span class="ct">${dots(c)}</span>` : `<span class="tag">not placed</span>`);
+        row.onclick = () => { selected = n; refresh(); };
+        listEl.appendChild(row);
+    }
+    // UNUSED: entries whose key is no longer in FILES. Kept until deleted by hand.
+    for (const n of Object.keys(spots)) {
+        if (FILES.includes(n)) continue;
+        const row = document.createElement('div');
+        row.className = 'row unused';
+        row.innerHTML = `<span class="nm">${n}</span><span class="tag">unused</span>`;
+        const del = document.createElement('button');
+        del.textContent = '✕';
+        del.onclick = e => { e.stopPropagation(); snapshot(); delete spots[n]; refresh(); };
+        row.appendChild(del);
+        listEl.appendChild(row);
+    }
+}
+function refresh() { renderList(); draw(); }
+
+// ── VIEW ─────────────────────────────────────────────────────────────────
+function resize() {
+    cv.width = cv.clientWidth * devicePixelRatio; cv.height = cv.clientHeight * devicePixelRatio;
+    draw();
+}
+function fit() {
+    const w = cv.clientWidth, h = cv.clientHeight;
+    view.zoom = Math.min(w, h) / MAP * 0.95;
+    view.x = MAP / 2 - w / 2 / view.zoom; view.y = MAP / 2 - h / 2 / view.zoom;
+}
+function toMap(e) {
+    const r = cv.getBoundingClientRect();
+    return { x: view.x + (e.clientX - r.left) / view.zoom, y: view.y + (e.clientY - r.top) / view.zoom };
+}
+function natural(n) {
+    const im = imgs[n];
+    return im && im.naturalWidth ? { w: im.naturalWidth, h: im.naturalHeight } : { w: 60, h: 60 };
+}
+// NEW SIZE: image size × the scale slider, as the longest side.
+function defSize(n) { const s = natural(n); return Math.round(Math.max(s.w, s.h) * scale); }
+function sizeOf(n, sp) {
+    const s = natural(n), k = ((sp && sp[2]) || defSize(n)) / Math.max(s.w, s.h);
+    return { w: s.w * k, h: s.h * k };
+}
+function onHandle(p) {
+    if (!active) return false;
+    const sp = spots[active.name][active.i], s = sizeOf(active.name, sp), r = 8 / view.zoom;
+    return Math.abs(p.x - (sp[0] + s.w / 2)) <= r && Math.abs(p.y - (sp[1] + s.h / 2)) <= r;
+}
+// HIT TEST: front-most first.
+function hit(p) {
+    const st = stacked();
+    for (let k = st.length - 1; k >= 0; k--) {
+        const { name, i, sp } = st[k], s = sizeOf(name, sp);
+        if (Math.abs(p.x - sp[0]) <= s.w / 2 && Math.abs(p.y - sp[1]) <= s.h / 2) return { name, i };
+    }
+    return null;
+}
+
+// ── DRAW ─────────────────────────────────────────────────────────────────
+function draw() {
+    const d = devicePixelRatio;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#111'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(view.zoom * d, 0, 0, view.zoom * d, -view.x * view.zoom * d, -view.y * view.zoom * d);
+
+    // GROUND: the seamless tile repeated over the whole map.
+    if (!groundPat && ground.complete && ground.naturalWidth) groundPat = ctx.createPattern(ground, 'repeat');
+    ctx.fillStyle = groundPat || '#8a4a2a';
+    ctx.fillRect(0, 0, MAP, MAP);
+    ctx.lineWidth = 2 / view.zoom; ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.strokeRect(0, 0, MAP, MAP);
+    // CENTRE: where the colony grows from.
+    ctx.beginPath(); ctx.moveTo(MAP / 2 - 30, MAP / 2); ctx.lineTo(MAP / 2 + 30, MAP / 2);
+    ctx.moveTo(MAP / 2, MAP / 2 - 30); ctx.lineTo(MAP / 2, MAP / 2 + 30); ctx.stroke();
+
+    const st = stacked();
+    for (const { name: n, sp } of st) {
+        const im = imgs[n], [x, y] = sp, s = sizeOf(n, sp);
+        ctx.globalAlpha = n === selected ? 1 : 0.35;
+        if (im && im.naturalWidth) ctx.drawImage(im, x - s.w / 2, y - s.h / 2, s.w, s.h);
+        else { ctx.fillStyle = '#c55'; ctx.fillRect(x - 30, y - 30, 60, 60); }
+    }
+    ctx.globalAlpha = 1;
+    // OUTLINES over everything, so a spot behind another is still findable.
+    for (const { name: n, i, sp } of st) {
+        const [x, y] = sp, s = sizeOf(n, sp), sel = n === selected;
+        if (sel || (hover && hover.name === n && hover.i === i)) {
+            ctx.strokeStyle = sel ? '#ffd76a' : '#fff';
+            ctx.strokeRect(x - s.w / 2, y - s.h / 2, s.w, s.h);
+            ctx.fillStyle = '#ffd76a'; ctx.font = `${14 / view.zoom}px system-ui`;
+            ctx.fillText(sel ? String(i + 1) : n, x - s.w / 2 + 3 / view.zoom, y - s.h / 2 - 4 / view.zoom);
+        }
+        if (active && active.name === n && active.i === i) {
+            const r = 6 / view.zoom;
+            ctx.fillStyle = '#ffd76a'; ctx.fillRect(x + s.w / 2 - r, y + s.h / 2 - r, r * 2, r * 2);
+        }
+    }
+}
+
+// ── INPUT ────────────────────────────────────────────────────────────────
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('mousedown', e => {
+    if (e.button === 1 || (e.button === 0 && spaceDown)) {
+        pan = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y }; e.preventDefault(); return;
+    }
+    hideMenu();
+    const p = toMap(e);
+    if (e.button === 0 && onHandle(p)) { snapshot(); sizing = { ...active, moved: false }; return; }
+    const h = hit(p);
+    if (e.button === 2) { if (h) showMenu(h, e); return; }
+    if (e.button !== 0) return;
+    if (h) {
+        if (h.name !== selected && FILES.includes(h.name)) { selected = h.name; renderList(); }
+        active = h; draw();
+        snapshot();
+        const [x, y] = spots[h.name][h.i];
+        drag = { ...h, dx: x - p.x, dy: y - p.y, moved: false };
+        return;
+    }
+    active = null; draw();
+    if (p.x < 0 || p.y < 0 || p.x > MAP || p.y > MAP) return;
+    const arr = spots[selected] || [];
+    if (arr.length >= PER) return;
+    snapshot();
+    arr.push([Math.round(p.x), Math.round(p.y), defSize(selected), topZ() + 1]);
+    spots[selected] = arr;
+    // AUTO-ADVANCE: after the third, on to the next item that still needs spots.
+    if (arr.length === PER) {
+        const k = FILES.indexOf(selected);
+        const next = FILES.slice(k + 1).concat(FILES.slice(0, k)).find(n => (spots[n] || []).length < PER);
+        if (next) selected = next;
+    }
+    refresh();
+});
+window.addEventListener('mousemove', e => {
+    if (pan) {
+        view.x = pan.vx - (e.clientX - pan.sx) / view.zoom; view.y = pan.vy - (e.clientY - pan.sy) / view.zoom;
+        draw(); return;
+    }
+    if (e.target !== cv && !drag && !sizing) return;
+    const p = toMap(e);
+    if (sizing) {
+        // RESIZE: the corner follows the mouse, aspect kept.
+        const sp = spots[sizing.name][sizing.i], s = natural(sizing.name), L = Math.max(s.w, s.h);
+        const k = Math.max(2 * Math.abs(p.x - sp[0]) / (s.w / L), 2 * Math.abs(p.y - sp[1]) / (s.h / L));
+        sp[2] = Math.max(8, Math.round(k)); sizing.moved = true;
+        draw(); return;
+    }
+    if (drag) {
+        const x = Math.max(0, Math.min(MAP, Math.round(p.x + drag.dx)));
+        const y = Math.max(0, Math.min(MAP, Math.round(p.y + drag.dy)));
+        const sp = spots[drag.name][drag.i]; sp[0] = x; sp[1] = y; drag.moved = true;
+        draw(); return;
+    }
+    const h = hit(p);
+    if (JSON.stringify(h) !== JSON.stringify(hover)) { hover = h; draw(); }
+});
+window.addEventListener('mouseup', () => {
+    if ((drag && !drag.moved) || (sizing && !sizing.moved)) undo.pop();   // a click, not a change: no history entry
+    drag = null; pan = null; sizing = null;
+});
+cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    const p = toMap(e), r = cv.getBoundingClientRect();
+    if (e.shiftKey) {
+        // SHIFT+WHEEL: resize the spot under the mouse; one history entry per burst.
+        const h = hit(p);
+        if (!h) return;
+        if (performance.now() - wheelSizeAt > 400) snapshot();
+        wheelSizeAt = performance.now();
+        const sp = spots[h.name][h.i], d = e.deltaY || e.deltaX;
+        sp[2] = Math.max(8, Math.round((sp[2] || defSize(h.name)) * Math.exp(-d * 0.002)));
+        active = h; draw(); return;
+    }
+    view.zoom = Math.max(0.1, Math.min(8, view.zoom * Math.exp(-e.deltaY * 0.0015)));
+    view.x = p.x - (e.clientX - r.left) / view.zoom; view.y = p.y - (e.clientY - r.top) / view.zoom;
+    draw();
+}, { passive: false });
+
+function removeSpot(h) {
+    snapshot();
+    spots[h.name].splice(h.i, 1);
+    hover = active = null;
+    refresh();
+}
+// DUPLICATE: a copy beside it at the same size, if the item has room.
+function duplicateSpot(h) {
+    const arr = spots[h.name];
+    if (arr.length >= PER) return;
+    snapshot();
+    const sp = arr[h.i], s = sizeOf(h.name, sp);
+    const x = sp[0] + s.w * 0.6 <= MAP ? sp[0] + s.w * 0.6 : sp[0] - s.w * 0.6;
+    arr.push([Math.round(Math.max(0, x)), sp[1], sp[2] || defSize(h.name), topZ() + 1]);
+    active = { name: h.name, i: arr.length - 1 };
+    refresh();
+}
+
+// ── RIGHT-CLICK MENU ─────────────────────────────────────────────────────
+const menuEl = document.getElementById('menu'), mDup = document.getElementById('mDup');
+let menuFor = null;
+function showMenu(h, e) {
+    menuFor = h; active = h; draw();
+    mDup.className = spots[h.name].length >= PER ? 'off' : '';
+    menuEl.style.left = e.clientX + 'px'; menuEl.style.top = e.clientY + 'px'; menuEl.style.display = 'block';
+}
+function hideMenu() { menuEl.style.display = 'none'; menuFor = null; }
+mDup.onclick = () => { const h = menuFor; hideMenu(); duplicateSpot(h); };
+// STEP: past the next sprite it overlaps, in front (dir 1) or behind (dir -1).
+// Sprites elsewhere on the map don't change what is seen, so they're skipped.
+function overlaps(a, b) {
+    const sa = sizeOf(a.name, a.sp), sb = sizeOf(b.name, b.sp);
+    return Math.abs(a.sp[0] - b.sp[0]) * 2 < sa.w + sb.w && Math.abs(a.sp[1] - b.sp[1]) * 2 < sa.h + sb.h;
+}
+function step(h, dir) {
+    const st = stacked(), k = st.findIndex(e => e.name === h.name && e.i === h.i), me = st[k];
+    let j = k + dir;
+    while (j >= 0 && j < st.length && !overlaps(me, st[j])) j += dir;
+    if (j < 0 || j >= st.length) return;          // nothing overlapping that way
+    snapshot();
+    st.splice(k, 1);
+    st.splice(j, 0, me);                          // with k removed, index j is just past that sprite either way
+    st.forEach((e, n) => { e.sp[3] = n; });
+    draw();
+}
+document.getElementById('mFront').onclick = () => { const h = menuFor; hideMenu(); step(h, 1); };
+document.getElementById('mBack').onclick = () => { const h = menuFor; hideMenu(); step(h, -1); };
+document.getElementById('mDel').onclick = () => { const h = menuFor; hideMenu(); removeSpot(h); };
+document.addEventListener('mousedown', e => { if (!menuEl.contains(e.target) && e.target !== cv) hideMenu(); });
+window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.code === 'Space') { spaceDown = true; cv.style.cursor = 'grab'; e.preventDefault(); }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); doUndo(); }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') hideMenu();
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (hover || active)) removeSpot(hover || active);
+});
+window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; cv.style.cursor = ''; } });
+
+const scaleEl = document.getElementById('scale');
+scaleEl.oninput = () => { scale = +scaleEl.value; document.getElementById('scaleV').textContent = scale; draw(); };
+
+// ── SAVE ─────────────────────────────────────────────────────────────────
+function fileText() {
+    // LAYERS renumbered 0, 1, 2… in stack order.
+    stacked().forEach((e, k) => { e.sp[3] = k; });
+    // ORDER: FILES order first, then any unused keys still kept.
+    const keys = FILES.filter(n => spots[n] && spots[n].length).concat(Object.keys(spots).filter(n => !FILES.includes(n)));
+    const w = Math.max(0, ...keys.map(n => n.length + 3));
+    const lines = keys.map(n => `    ${(`'${n}':`).padEnd(w)} [${spots[n].map(([x, y, s, z]) => `[${x}, ${y}, ${s || defSize(n)}, ${z}]`).join(', ')}],`);
+    return '// Colony spots: where each payload item\'s three copies land on the Mars map.\n' +
+        '// Keyed by CONFIG.PAYLOAD.FILES name. Each spot is [x, y, size, layer]: x, y, size\n' +
+        '// in map px on a 2048×2048 map, centre (1024, 1024); size is the sprite\'s longest\n' +
+        '// side; layer is the draw order across all items (higher = in front).\n' +
+        '// Written by tools/colony-editor.html.\n' +
+        'const COLONY_SPOTS = {\n' + lines.join('\n') + '\n};\n';
+}
+function idb(op, val) {
+    return new Promise(res => {
+        const rq = indexedDB.open('colony-editor', 1);
+        rq.onupgradeneeded = () => rq.result.createObjectStore('h');
+        rq.onerror = () => res(null);
+        rq.onsuccess = () => {
+            const st = rq.result.transaction('h', op === 'get' ? 'readonly' : 'readwrite').objectStore('h');
+            const r = op === 'get' ? st.get('file') : st.put(val, 'file');
+            r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
+        };
+    });
+}
+async function save() {
+    const text = fileText();
+    if (window.showSaveFilePicker) {
+        try {
+            // REMEMBERED FILE: a page can't name a path itself, so the project's
+            // colonySpots.js is picked once and its handle kept in IndexedDB.
+            if (!fileHandle) fileHandle = await idb('get');
+            if (fileHandle && await fileHandle.requestPermission({ mode: 'readwrite' }) !== 'granted') fileHandle = null;
+            if (!fileHandle) {
+                alert('Pick colonySpots.js in the project root (once; it is remembered).');
+                [fileHandle] = await showOpenFilePicker({ id: 'colony', types: [{ description: 'JS', accept: { 'text/javascript': ['.js'] } }] });
+                if (fileHandle.name !== 'colonySpots.js' && !confirm(`Save into ${fileHandle.name}?`)) { fileHandle = null; return; }
+                await idb('put', fileHandle);
+            }
+            const w = await fileHandle.createWritable(); await w.write(text); await w.close();
+            setDirty(false); return;
+        } catch (err) { if (err.name === 'AbortError') return; console.warn(err); }
+    }
+    // FALLBACK: download it; move it into the project root by hand.
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
+    a.download = 'colonySpots.js'; a.click();
+    setDirty(false);
+}
+document.getElementById('save').onclick = save;
+window.addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
+
+window.addEventListener('resize', resize);
+fit(); resize(); renderList();
+setDirty(false); statusEl.textContent = typeof COLONY_SPOTS !== 'undefined' ? 'loaded colonySpots.js' : 'no colonySpots.js yet';
+</script>
+</body>
+</html>
