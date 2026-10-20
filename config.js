@@ -719,11 +719,11 @@ var CONFIG = {
         EARTH: { SEAT: 24,       // the ground meets the springs' base plates this far below their face, px @ spring design
                  TOP: 0.78,      // (only before the springs exist) top of the Earth, fraction of the half's height
                  RADIUS: 1.6,    // sphere radius, × the half's width
-                 HAZE: '#BFE9FF', HAZE_PX: 14,                       // air glow round the rim: three rings this wide (px @ design)
-                 OCEAN: '#4FA3E6', OCEAN_DEEP: '#3D8ED6',
+                 HAZE: '#BFE9FF', HAZE_PX: 14, HAZE_ALPHA: 0.25,     // air glow round the rim: one ring this wide (px @ design), this opaque
+                 OCEAN: '#4FA3E6',
                  LAND: '#5DAA4C', SAND: '#D9C48A',
                  // Continents: [angle from the crown (radians), depth below the surface, size], × the half's width.
-                 CONTINENTS: [[-0.27, 0.12, 0.07], [0.27, 0.16, 0.08], [0.02, 0.30, 0.09], [-0.16, 0.48, 0.08], [0.17, 0.62, 0.1]],
+                 CONTINENTS: [],  // none: only the springs' island on the crown (was 5 blobs, e.g. [-0.27, 0.12, 0.07])
                  // The springs' island on the crown: half its width (× the half's width), and its layers'
                  // depths at the middle, px @ design.
                  ISLAND: 0.46, GRASS_PX: 16, SOIL_PX: 48, DEEP_PX: 90, SAND_PX: 26,

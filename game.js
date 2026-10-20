@@ -1888,16 +1888,12 @@ class GameScene extends Phaser.Scene {
             g.fillPath();
         };
 
-        // AIR: a few soft rings, thinning outward.
+        // AIR: one soft ring round the rim.
         const haze = (E.HAZE_PX || 14) * sc;
-        for (let n = 3; n >= 1; n--) {
-            g.fillStyle(hexColor(E.HAZE || '#BFE9FF'), 0.18 + 0.12 * (3 - n));
-            g.fillCircle(cx, cy, R + haze * n);
-        }
+        g.fillStyle(hexColor(E.HAZE || '#BFE9FF'), E.HAZE_ALPHA !== undefined ? E.HAZE_ALPHA : 0.25);
+        g.fillCircle(cx, cy, R + haze);
         g.fillStyle(hexColor(E.OCEAN || '#2E7CC4'), 1);
         g.fillCircle(cx, cy, R);
-        g.fillStyle(hexColor(E.OCEAN_DEEP || '#225FA0'), 1);
-        g.fillCircle(cx, cy, R - 0.08 * w);
 
         // CONTINENTS: [angle from the crown, depth below the surface, size],
         // depth and size × the half's width. A sandy blob with green over most
