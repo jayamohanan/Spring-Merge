@@ -2133,7 +2133,10 @@ class GameScene extends Phaser.Scene {
             if (seen.has(n) || !COLONY_SPOTS[n] || !this.textures.exists(key)) continue;
             seen.add(n);
             had.push(n);
-            for (const sp of COLONY_SPOTS[n]) make(key, sp, n);
+            // THE CRAFT, once its landing is over, is kept but unseen (it would
+            // crowd the domes): the flag and the footprints are placed from it.
+            const unseen = CR && n === CR.FROM && CR.CRAFT_STAYS === false;
+            for (const sp of COLONY_SPOTS[n]) make(key, sp, n).setVisible(!unseen);
             // ITS CREW, already out at their spots.
             if (CR && n === CR.FROM && COLONY_SPOTS[CR.NAME] && this.textures.exists(CR.NAME)) {
                 had.push(CR.NAME);
@@ -2178,7 +2181,12 @@ class GameScene extends Phaser.Scene {
                     if (--land.left === 0) this.time.delayedCall(2 * sqMs, () => {
                         if (this.landing !== land) return;
                         const ms = this._landingReact();
-                        this.time.delayedCall(Math.max(((M.REACT || {}).HOLD_MS || 1000), ms), () => {
+                        this.time.delayedCall(Math.max(0, ms - 300), () => { if (this.landing === land) this._landingCaption(); });
+                        // A LONGER LOOK at the colony after the change, except on
+                        // the crew's landing (its walk-out is already long).
+                        const RC = M.REACT || {}, look = name === (M.CREW || {}).FROM ? 0
+                            : (RC.LOOK_MS !== undefined ? RC.LOOK_MS : 2000);
+                        this.time.delayedCall(Math.max(RC.HOLD_MS || 1000, ms) + look, () => {
                             if (this.landing !== land) return;
                             this.time.delayedCall(this._landingBanner(), () => this._endLanding());
                         });
@@ -2234,6 +2242,21 @@ class GameScene extends Phaser.Scene {
             }
             l.confetti = l.confetti.filter((p) => p.y < maxY);
         }
+        // THE ANTENNAS' SIGNAL: each arc widening out from its tip and fading;
+        // a bright dot at the tip while it sends.
+        if (l.waves && l.waves.length) {
+            const SG = (((CONFIG.MARS || {}).REACT || {}).SIGNAL) || {}, c = hexColor(SG.COLOR || '#8FE8FF');
+            const life = SG.WAVE_MS || 950, spread = (SG.SPREAD || 45) * Math.PI / 180, now = this.time.now;
+            l.waves = l.waves.filter((w) => now - w.born < life);
+            for (const w of l.waves) {
+                const k = (now - w.born) / life, r = w.sz * (SG.REACH || 0.75) * (0.08 + 0.92 * k);
+                l.g.lineStyle(Math.max(2, w.sz * 0.05 * (1 - k * 0.6)), c, 1 - k);
+                l.g.beginPath();
+                l.g.arc(w.x, w.y, r, w.dir - spread, w.dir + spread);
+                l.g.strokePath();
+                if (k < 0.3) { l.g.fillStyle(0xFFFFFF, 1 - k / 0.3); l.g.fillCircle(w.x, w.y, w.sz * 0.04); }
+            }
+        }
         // THE CREW BREATHES while it stands: a slow squash on its feet, each
         // out of step with the others.
         const CR = (CONFIG.MARS || {}).CREW || {}, q = CR.IDLE_SQUASH !== undefined ? CR.IDLE_SQUASH : 0.05;
@@ -2247,7 +2270,7 @@ class GameScene extends Phaser.Scene {
         const S = (CONFIG.MARS || {}).SHADOW || {}, sh = l.shadows, sc = hexColor(S.COLOR || '#3A1608');
         sh.clear();
         for (const n in l.at) for (const img of l.at[n]) {
-            if (img.noShadow) continue;     // standing up on its craft
+            if (img.noShadow || !img.visible) continue;     // standing up on its craft, or an unseen craft
             const gy = img.gy !== undefined ? img.gy : img.fy;
             const up = Math.max(0, Math.min(1, (gy - img.y) / (img.sz * (S.LIFT || 1.5))));
             const I = (S.BY_ITEM || {})[img.nm] || {};
@@ -2266,23 +2289,25 @@ class GameScene extends Phaser.Scene {
         }
         l.dust = l.dust.filter(d => d.life < d.ttl);
         // POWER running down the cables, panel to dome, while the dusk lasts.
+        if (l.flowG) l.flowG.clear();
         if (l.flow) {
+            const fg = l.flowG || l.g;      // under the sprites, so it runs in behind them
             const t = this.time.now / 1000, c = hexColor(((CONFIG.MARS || {}).REACT || {}).GLOW || '#FFD27A');
             // A GLOW, not dots: the whole cable lit faintly and breathing, and
             // soft pulses running down it, each a fading trail of layered halos.
             const breathe = 0.75 + 0.25 * Math.sin(t * 6);
             for (const [x1, y1, x2, y2] of l.flow) {
-                l.g.lineStyle(22, c, 0.08 * breathe); l.g.lineBetween(x1, y1, x2, y2);
-                l.g.lineStyle(9, c, 0.22 * breathe);  l.g.lineBetween(x1, y1, x2, y2);
+                fg.lineStyle(22, c, 0.08 * breathe); fg.lineBetween(x1, y1, x2, y2);
+                fg.lineStyle(9, c, 0.22 * breathe);  fg.lineBetween(x1, y1, x2, y2);
                 for (let j = 0; j < 3; j++) {
                     const head = (t * 0.7 + j / 3) % 1;
                     for (let s = 0; s < 8; s++) {
                         const k = head - s * 0.025;
                         if (k < 0) break;
                         const x = x1 + (x2 - x1) * k, y = y1 + (y2 - y1) * k, f = 1 - s / 8;
-                        l.g.fillStyle(c, 0.06 * f); l.g.fillCircle(x, y, 26 * f);
-                        l.g.fillStyle(c, 0.14 * f); l.g.fillCircle(x, y, 15 * f);
-                        l.g.fillStyle(0xFFFFFF, 0.35 * f * f); l.g.fillCircle(x, y, 5 * f);
+                        fg.fillStyle(c, 0.06 * f); fg.fillCircle(x, y, 26 * f);
+                        fg.fillStyle(c, 0.14 * f); fg.fillCircle(x, y, 15 * f);
+                        fg.fillStyle(0xFFFFFF, 0.35 * f * f); fg.fillCircle(x, y, 5 * f);
                     }
                 }
             }
@@ -2302,7 +2327,7 @@ class GameScene extends Phaser.Scene {
             for (const q of list) { const d = Math.hypot(q.x - p.x, q.fy - p.fy); if (d < bd) { bd = d; b = q; } }
             return b;
         };
-        const all = [].concat(...Object.values(at));
+        const all = [].concat(...Object.values(at)).filter((q) => q.visible);
         const cx = all.reduce((s, q) => s + q.x, 0) / all.length, cy = all.reduce((s, q) => s + q.fy, 0) / all.length;
 
         if (n === ((CONFIG.MARS || {}).CREW || {}).NAME) {
@@ -2328,7 +2353,13 @@ class GameScene extends Phaser.Scene {
             for (const d of own) g.lineBetween(d.x, d.fy, cx, cy);
         } else if (n === 'solar-panels') {
             g.lineStyle(5, col('CABLE', '#3B3446'), 0.8);
-            for (const p of own) { const d = near(p, domes); if (d) g.lineBetween(p.x, p.fy, d.x, d.fy); }
+            // Panel to dome, both ends in behind the pictures (CABLE_FROM / CABLE_TO).
+            for (const p of own) {
+                const d = near(p, domes);
+                if (!d) continue;
+                const a = this._picPoint(p, R.CABLE_FROM || [0.5, 0.8]), b = this._picPoint(d, R.CABLE_TO || [0.5, 0.8]);
+                g.lineBetween(a.x, a.y, b.x, b.y);
+            }
             if (!opt.dark) for (const d of domes) this._domeGlow(l.glow, d, 0.18);
         } else if (n === 'water-tower') {
             for (const t of own) {
@@ -2336,10 +2367,14 @@ class GameScene extends Phaser.Scene {
                 g.fillEllipse(t.x, t.fy, t.sz * 0.6, t.sz * 0.18);
                 const d = near(t, domes);
                 if (!d) continue;
+                // From PIPE_FROM on the tower's picture to PIPE_TO on the
+                // dome's (0..1 across, 0..1 down); the marks are under every
+                // sprite, so both ends tuck in behind them.
+                const a = this._picPoint(t, R.PIPE_FROM || [0.5, 0.8]), b = this._picPoint(d, R.PIPE_TO || [0.5, 0.5]);
                 g.lineStyle(9, col('PIPE', '#9FB3C0'), 1);
-                g.lineBetween(t.x, t.fy, d.x, d.fy);
+                g.lineBetween(a.x, a.y, b.x, b.y);
                 g.lineStyle(3, 0xFFFFFF, 0.5);
-                g.lineBetween(t.x, t.fy - 2, d.x, d.fy - 2);
+                g.lineBetween(a.x, a.y - 2, b.x, b.y - 2);
             }
             if (own[0] && !opt.noSprout) this._sprout(g, own[0].x + own[0].sz * 0.45, own[0].fy + 6, own[0].sz);
         }
@@ -2388,6 +2423,41 @@ class GameScene extends Phaser.Scene {
         this._landingDust(img.x - img.displayWidth / 2, img.fy, img.displayWidth * 0.3, img.sz * 0.6);
         // Just a small pop: up a little and back.
         this.tweens.add({ targets: img, scale: s * 1.12, duration: (CR.PLANT_MS || 450) / 2, yoyo: true, ease: 'Sine.InOut' });
+    }
+
+    // A four-point sparkle at (x, y), map px: pops open and closes.
+    _sparkle(x, y, r) {
+        const l = this.landing;
+        if (!l) return;
+        const g = this.add.graphics().setPosition(x, y).setScale(0);
+        g.fillStyle(0xFFFFFF, 1);
+        g.fillPoints([{ x: 0, y: -r }, { x: r * 0.18, y: 0 }, { x: 0, y: r }, { x: -r * 0.18, y: 0 }], true);
+        g.fillPoints([{ x: -r * 0.7, y: 0 }, { x: 0, y: r * 0.14 }, { x: r * 0.7, y: 0 }, { x: 0, y: -r * 0.14 }], true);
+        l.colony.add(g);
+        this.tweens.add({ targets: g, scale: 1, angle: 45, duration: 180, yoyo: true, ease: 'Quad.Out', onComplete: () => g.destroy() });
+    }
+
+    // A lightning bolt rising from (x, y), map px, and fading: "powered".
+    _bolt(x, y, h) {
+        const l = this.landing, R = (CONFIG.MARS || {}).REACT || {};
+        if (!l) return;
+        const g = this.add.graphics().setPosition(x, y).setScale(0.4);
+        const pts = [[0.12, -0.5], [-0.24, 0.06], [-0.02, 0.06], [-0.14, 0.5], [0.24, -0.08], [0.02, -0.08]]
+            .map(([a, b]) => ({ x: a * h, y: b * h }));
+        g.fillStyle(hexColor(R.GLOW || '#FFD27A'), 1);
+        g.fillPoints(pts, true);
+        g.lineStyle(Math.max(2, h * 0.05), hexColor(R.BOLT_EDGE || '#8A5A00'), 1);
+        g.strokePoints(pts, true);
+        l.colony.add(g);
+        this.tweens.add({ targets: g, scale: 1, duration: 220, ease: 'Back.Out' });
+        this.tweens.add({ targets: g, y: y - h * 1.2, alpha: 0, delay: 350, duration: 650, ease: 'Sine.In', onComplete: () => g.destroy() });
+    }
+
+    // A point on a colony sprite's picture at rest, [across, down] in 0..1
+    // (mirrored with it), in map px.
+    _picPoint(img, [ax, ay]) {
+        const w = img.frame.width * img.bs, h = img.frame.height * img.bs;
+        return { x: img.x + ((img.flipX ? 1 - ax : ax) - 0.5) * w, y: img.fy - (1 - ay) * h };
     }
 
     _footprint(g, x, y, sz) {
@@ -2491,43 +2561,54 @@ class GameScene extends Phaser.Scene {
             return 1400;
         }
         if (n === 'solar-panels') {
-            // DUSK, power running down the cables, the domes lighting one by
-            // one; then day again, the domes keeping a faint glow.
-            const dark = R.DUSK_MS || 1400, dIn = 500, dOut = 600;
+            // IN DAYLIGHT: each panel catches the sun (a white flash of its own
+            // picture and a sparkle), power runs down the cables, and each dome
+            // answers as it arrives — a pop, its window lighting, a bolt rising
+            // over it. The domes keep a faint glow after.
+            const glint = R.GLINT_MS || 450, power = R.POWER_MS || 1800, step = 200;
             this._colonyMarks(fresh, n, { dark: true });
             fadeIn(400);
-            const dusk = this.add.graphics().setAlpha(0);
-            dusk.fillStyle(hexColor(R.DUSK || '#1A1440'), 1);
-            dusk.fillRect(-2048, -2048, 6144, 6144);
-            colony.add(dusk);
-            colony.bringToTop(l.glow);
-            colony.bringToTop(l.g);
-            this.tweens.add({ targets: dusk, alpha: R.DUSK_ALPHA || 0.6, duration: dIn });
-            const domes = l.at['dome'] || [], lights = [];
-            this.time.delayedCall(dIn, () => {
+            own.forEach((p, i) => {
+                const fl = this.add.image(p.x, p.y, p.texture.key).setOrigin(p.originX, p.originY)
+                    .setScale(p.scaleX, p.scaleY).setFlipX(p.flipX).setTintFill(0xFFFFFF).setAlpha(0);
+                colony.addAt(fl, colony.getIndex(p) + 1);
+                this.tweens.add({ targets: fl, alpha: 0.65, delay: i * step, duration: glint / 2, yoyo: true, ease: 'Sine.InOut',
+                    onComplete: () => fl.destroy() });
+                this.time.delayedCall(i * step + glint * 0.4, () => {
+                    if (this.landing === l) this._sparkle(p.x + p.displayWidth * 0.3, p.fy - p.displayHeight * 0.85, p.sz * 0.22);
+                });
+            });
+            const t1 = (own.length - 1) * step + glint;          // all glinted: the power goes
+            const domes = l.at['dome'] || [];
+            this.time.delayedCall(t1, () => {
                 if (this.landing !== l) return;
                 l.flow = [];
                 for (const p of own) {
                     let d = null, bd = Infinity;
                     for (const q of domes) { const dd = Math.hypot(q.x - p.x, q.fy - p.fy); if (dd < bd) { bd = dd; d = q; } }
-                    if (d) l.flow.push([p.x, p.fy, d.x, d.fy]);
+                    if (!d) continue;
+                    const a = this._picPoint(p, R.CABLE_FROM || [0.5, 0.8]), b = this._picPoint(d, R.CABLE_TO || [0.5, 0.8]);
+                    l.flow.push([a.x, a.y, b.x, b.y]);
                 }
-                domes.forEach((d, i) => {
-                    const lg = this.add.graphics().setAlpha(0);
-                    this._domeGlow(lg, d, 0.35);
-                    colony.add(lg);
-                    colony.bringToTop(l.g);
-                    lights.push(lg);
-                    this.tweens.add({ targets: lg, alpha: 1, delay: 250 + i * 250, duration: 250 });
-                });
+                // THE POWER'S OWN LAYER, just over the shadows and under every
+                // sprite, so it runs in behind the panels and domes.
+                l.flowG = this.add.graphics();
+                colony.addAt(l.flowG, colony.getIndex(l.shadows) + 1);
             });
-            this.time.delayedCall(dIn + dark, () => {
+            domes.forEach((d, i) => this.time.delayedCall(t1 + 600 + i * 250, () => {
                 if (this.landing !== l) return;
-                l.flow = null;
-                this.tweens.add({ targets: [dusk, ...lights], alpha: 0, duration: dOut });
-                for (const d of domes) this._domeGlow(l.glow, d, 0.18);
-            });
-            return dIn + dark + dOut;
+                const s = d.bs;
+                this.tweens.add({ targets: d, scaleY: s * 0.9, scaleX: s * 1.05, duration: 110, yoyo: true, ease: 'Quad.Out' });
+                const lg = this.add.graphics().setAlpha(0);
+                this._domeGlow(lg, d, 0.35);
+                colony.add(lg);
+                this.tweens.add({ targets: lg, alpha: 1, duration: 200, yoyo: true, hold: 500, onComplete: () => lg.destroy() });
+                this._domeGlow(l.glow, d, 0.18);
+                this._bolt(d.x, d.fy - d.displayHeight * 0.95, d.sz * 0.22);
+                colony.bringToTop(l.g);
+            }));
+            this.time.delayedCall(t1 + power, () => { if (this.landing === l) l.flow = null; });
+            return t1 + power + 200;
         }
         if (n === 'water-tower') {
             this._colonyMarks(fresh, n, { noSprout: true });
@@ -2540,6 +2621,21 @@ class GameScene extends Phaser.Scene {
                 this.tweens.add({ targets: sp, scale: 1, delay: 600, duration: 400, ease: 'Back.Out' });
             }
             return 1500;
+        }
+        if (n === 'antenna') {
+            // SIGNAL: arcs pulsing from each tip in turn (drawn in _updateLanding).
+            const SG = R.SIGNAL || {}, every = SG.EVERY || 380, total = SG.MS || 2600;
+            l.waves = l.waves || [];
+            own.forEach((img, i) => {
+                const tip = this._picPoint(img, SG.TIP || [171 / 191, 61 / 256]);
+                const dir = (SG.DIR !== undefined ? SG.DIR : -50) * Math.PI / 180;
+                const d = img.flipX ? Math.PI - dir : dir;
+                for (let t = i * 150; t < total; t += every)
+                    this.time.delayedCall(t, () => {
+                        if (this.landing === l) l.waves.push({ x: tip.x, y: tip.y, dir: d, sz: img.sz, born: this.time.now });
+                    });
+            });
+            return total + (SG.WAVE_MS || 950);
         }
         this._colonyMarks(fresh, n);
         fadeIn(600);
@@ -2555,6 +2651,24 @@ class GameScene extends Phaser.Scene {
             if (o === l.ground || o === l.colony || o.depth >= 100) o.cameraFilter &= ~cam.id;
             else o.cameraFilter |= cam.id;
         }
+    }
+
+    // THE CAPTION for the item that just landed (MARS.CAPTION.TEXTS): plain
+    // text popping in near the half's top.
+    _landingCaption() {
+        const l = this.landing, CP = (CONFIG.MARS || {}).CAPTION || {};
+        const text = l && (CP.TEXTS || {})[l.name];
+        if (!text || l.caption) return;
+        const v = (x, d) => (x !== undefined ? x : d);
+        const B = this.layoutConfig.partB, sc = this.layoutConfig.platformScale;
+        l.caption = this.add.text(B.x + B.width / 2, B.y + B.height * v(CP.Y, 0.15), text, {
+            fontSize: Math.max(10, Math.round(v(CP.SIZE, 40) * sc)) + 'px',
+            fontFamily: CONFIG.FONT_FAMILY, fontStyle: CONFIG.FONT_WEIGHT,
+            color: CP.COLOR || '#FFFFFF', stroke: CP.STROKE || '#5A2410',
+            strokeThickness: Math.round(v(CP.STROKE_W, 7) * sc),
+        }).setOrigin(0.5).setDepth(v(CP.DEPTH, 160)).setScale(0.6).setAlpha(0);
+        this.tweens.add({ targets: l.caption, scale: 1, alpha: 1, duration: 300, ease: 'Back.Out' });
+        this._landingCamFilter();
     }
 
     // THE BANNER for the level that just landed (MARS.BANNER.TEXTS), if it
@@ -2611,12 +2725,13 @@ class GameScene extends Phaser.Scene {
         if (!l || l.out) return;
         l.out = true;
         this.tweens.add({
-            targets: [l.ground, l.colony, l.banner, l.cg].filter(Boolean), alpha: 0, duration: (CONFIG.MARS || {}).FADE_MS || 250,
+            targets: [l.ground, l.colony, l.banner, l.cg, l.caption].filter(Boolean), alpha: 0, duration: (CONFIG.MARS || {}).FADE_MS || 250,
             onComplete: () => {
                 for (const o of l.colony.list) this.tweens.killTweensOf(o);
                 l.ground.destroy(); l.colony.destroy();
                 if (l.banner) { this.tweens.killTweensOf(l.banner); l.banner.destroy(); }
                 if (l.cg) l.cg.destroy();
+                if (l.caption) { this.tweens.killTweensOf(l.caption); l.caption.destroy(); }
                 this.cameras.remove(l.cam);
                 this.landing = null;
                 this.springs.forEach((s, i) => {

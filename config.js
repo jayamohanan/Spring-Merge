@@ -766,7 +766,7 @@ var CONFIG = {
         FALL_MS:   433,          // each one's fall from above the screen, ms
         MAX_DELAY: 1000,         // each one starts after a random 0..this, ms
         HOLD_MS:   3000,         // after the last touchdown, before going back, ms
-        SQUASH:    0.22,         // touchdown squash: this much flatter (and half as much wider)
+        SQUASH:    0.11,         // touchdown squash: this much flatter (and half as much wider)
         SQUASH_MS: 90,           // …down, and the same back up, ms
         // SIZE, SPEED and COUNT are for an item REF map px big; a bigger one
         // (a spacecraft) kicks up more, further, in proportion.
@@ -791,11 +791,12 @@ var CONFIG = {
                   // pictures whose base is wider or deeper than most.
                   BY_ITEM: { 'spacecraft': { WIDTH: 1.15, FLAT: 0.32, RAISE: 0.08 } } },
         // WHAT EACH ITEM DOES once its three are down, and what it leaves on
-        // the ground for good (redrawn on every later landing): astronauts hop
-        // out and back leaving footprints; flags flutter and mark the camp's
-        // edge; domes get paths to the middle; solar panels bring dusk, power
-        // runs down cables and the domes light up; water towers get pipes, a
-        // wet patch and the first sprout. Keyed by PAYLOAD.FILES name in code.
+        // the ground for good (redrawn on every later landing): the crew walks
+        // out of the craft leaving footprints and plants the flag (the camp's
+        // edge); domes get paths to the middle; solar panels catch the sun,
+        // power runs down cables and each dome lights up with a bolt; water
+        // towers get pipes, a wet patch and the first sprout. Keyed by
+        // PAYLOAD.FILES name in code.
         // THE CREW: no level of its own — it rides inside FROM and, once that
         // has landed, walks out of it (copy i of FROM lets out crew member i)
         // to its own COLONY_SPOTS spots, hopping, and stays.
@@ -810,6 +811,7 @@ var CONFIG = {
                 MAX_HOPS: 4,          // each leg of the walk takes at most this many hops (longer hops if far)
                 // THE FLAG, no level either: the first crew member plants it
                 // where it lands, in front of the first craft, then walks on.
+                CRAFT_STAYS: false,   // false: the craft shows only on its own landing (level 1), unseen after
                 FLAG: 'flag',         // graphics/payload/<name>.webp
                 FLAG_SIZE: 90,        // its longest side, map px
                 FLAG_SIDE: 0.35,      // its pole this far right of the planter, × the crew member's size
@@ -817,6 +819,14 @@ var CONFIG = {
                 FLAG_DELAY_MS: 1000,  // it rises this long after its planter's touchdown, ms (the planter waits for it)
                 IDLE_SQUASH: 0.05,    // standing still, it breathes: this much flatter (and half as much wider) at most
                 IDLE_MS: 1100 },      // …one breath, ms
+        // A CAPTION, plain text, as each item's reaction finishes — by item
+        // name, so it follows the item whatever its level. Stays till the
+        // view goes back to Earth.
+        CAPTION: { TEXTS: { 'dome': 'Shelter Ready!', 'solar-panels': 'Power On!',
+                            'water-tower': 'Water Flowing!', 'antenna': 'Linked to Earth!' },
+                   Y:    0.15,        // its middle, fraction of the half's height from its top
+                   SIZE: 40, COLOR: '#FFFFFF', STROKE: '#5A2410', STROKE_W: 7,   // px @ design
+                   DEPTH: 160 },      // UI, over everything
         // A BANNER WITH CONFETTI once a landing's reaction is over (the first:
         // after the crew has walked out), by the level that landed. Shown for
         // MS, then back to Earth.
@@ -833,20 +843,35 @@ var CONFIG = {
                               SIZE: 16,       // a piece's long side, px @ design (each 0.6..1.2 of it)
                               COLORS: ['#FFD54F', '#4FC3F7', '#F06292', '#81C784', '#FFFFFF', '#BA68C8'] } },
         REACT: { HOLD_MS:   1000,     // the least hold after the reaction starts, ms
+                 LOOK_MS:   2000,     // then this long more to take in the change, ms (not on the crew's landing)
                  HOP_MS:    1040,     // one hop, ms
                  HOP_PAUSE: 220,      // standing still between hops, ms
                  HOP_H:     0.1,      // how high a hop goes, × the item's size
                  HOP_STEP:  0.3,      // one hop's length, × the crew member's size (unless MAX_HOPS stretches it)
-                 DUSK_ALPHA: 0.6,     // how dark the solar panels' dusk gets
-                 DUSK_MS:   1400,     // how long it stays dark, ms
+                 GLINT_MS:  450,      // a solar panel catching the sun, ms (one after another)
+                 POWER_MS:  1800,     // power running down the cables after, ms
                  MARK:   '#A9461F',   // footprints and wet ground
                  PATH:   '#C05A2B',   // paths between the domes
                  CLAIM:  '#F6B07A',   // the camp's dashed edge
                  CABLE:  '#3B3446',   // power cables
                  PIPE:   '#9FB3C0',   // water pipes
-                 DUSK:   '#1A1440',   // the dusk over Mars
-                 GLOW:   '#FFD27A',   // lit domes and the power running to them
-                 SPROUT: '#5FC24A' }, // the first green
+                 PIPE_FROM: [0.5, 0.8], // where a pipe leaves the tower: on its picture, [across, down] 0..1 (behind it)
+                 PIPE_TO:   [0.5, 0.8], // …and meets the dome, the same way
+                 CABLE_FROM: [0.5, 0.8], // where a power cable leaves a solar panel, the same way (behind it)
+                 CABLE_TO:   [0.5, 0.8], // …and meets the dome
+                 GLOW:   '#FFD27A',   // lit domes, the power running to them, the bolts over them
+                 BOLT_EDGE: '#8A5A00', // the bolts' outline
+                 SPROUT: '#5FC24A',   // the first green
+                 // THE ANTENNA'S SIGNAL: arcs pulsing out from its tip toward
+                 // where the dish faces, each antenna in turn.
+                 SIGNAL: { TIP: [171 / 191, 61 / 256],  // the tip on its picture, [across, down] 0..1 (mirrored with it)
+                           DIR: -50,          // the way the arcs go, degrees (0 right, -90 up; mirrored with it)
+                           SPREAD: 45,        // each arc's half-width, degrees
+                           MS: 2600,          // how long it sends, ms
+                           EVERY: 380,        // a new arc this often, ms
+                           WAVE_MS: 950,      // each arc's life, ms
+                           REACH: 0.75,       // how far an arc travels, × the antenna's size
+                           COLOR: '#8FE8FF' } },
     },
 
     // ── THE PIGGY STEERS ─────────────────────────────────────────────────────
