@@ -92,7 +92,7 @@ var CONFIG = {
         BATCH:    4,        // icons per tick, so ~4.5 per second at the default
     },
 
-    BATTERY_START_LEVEL: 10,
+    BATTERY_START_LEVEL: 1,
     // Coins a new run starts with. Default 2500; raise it to debug later levels.
     START_COINS: 2500,
     // THE ECONOMY. Coins come from releasing the springs — see levelData.js.
@@ -663,8 +663,29 @@ var CONFIG = {
         // plate drawn down from below. Sizes px @ design (× spring scale);
         // SPACING shrinks to fit a squeezed coil, GAP is the clearance from the
         // coil's ends, SIDE_GAP from the wire to a column.
-        ARROW: { ENABLED: true, MS: 450, COUNT: 4, COLOR: '#FFD54F',
+        ARROW: { ENABLED: false, MS: 450, COUNT: 4, COLOR: '#FFD54F',  // off: the shaft and wheel now show the pull
                  W: 36, H: 22, THICK: 9, SPACING: 26, GAP: 8, SIDE_GAP: 12 },  // MS: whole slide + fade, ms
+        // THE PULL, MECHANICAL: a threaded shaft up the coil's middle, base
+        // plate to top plate, and a hand wheel on the base plate's front.
+        // Each tick the wheel turns and winds the shaft down, drawing the
+        // top plate with it; on release the wheel spins back free. px @ design.
+        SHAFT: { ENABLED: true,
+                 SEGMENTS: 1,            // one threaded shaft (more: nested telescopic tubes)
+                 W:        26,           // the shaft's width (the widest, bottom tube's if nested), px
+                 TAPER:    0.22,         // each tube up is this much narrower, fraction of W
+                 COLLAR:   7,            // the band where a thinner tube comes out, px tall
+                 COLOR:    '#90A4AE',
+                 THREAD:   '#455A64',    // the screw thread on the top tube, coming down with the top plate
+                 PITCH:    9 },          // thread spacing, px
+        WHEEL: { ENABLED: true,
+                 R:        60,           // radius, px
+                 RIM:      16,           // rim and spoke thickness, px
+                 STRAIN_DEG: 2.5,        // holding the squeeze it trembles back up to this much, × the spring's tension (full = all), degrees
+                 SPOKES:   4,
+                 // COLOR / KNOB: unset = the shaft's body and thread colours, so
+                 // the wheel and the shaft read as one part.
+                 FULL_TURNS: 3,          // whole turns from rest to fully compressed, every level (each tick turns its share)
+                 RELEASE_TURNS: 3 },     // whole turns it spins back on release
         // ALL FULL → a 3-2-1 countdown, centred in the half over the springs, then
         // they launch on their own. Each number pops in from POP × size.
         COUNTDOWN: { FROM: 3, STEP_MS: 800,   // ms per number
@@ -737,12 +758,13 @@ var CONFIG = {
         FLIGHT: {
             ENABLED:   true,
             DEPTH:     40,       // over the springs, slots and slot piggies; under coins and dragging
-            CUT_MS:    150,      // release → the cut to the flight (the springs' throw plays first), ms
-            FADE_MS:   150,      // the cut's fade in, ms
+            // THE CUT: a hard cut the moment every payload has ridden its spring
+            // to the top, let go and left the screen; no fade.
+            CUT_MAX_MS: 2000,    // …or this long after release at the latest (a safety net), ms
             START_ALT: 0.4,      // altitude it opens at
             SPEED:     7,        // full climb, half-heights per second
             ACCEL_MS:  1400,     // time to reach it, ms
-            MS:        3200,     // whole flight from release, ms
+            MS:        3200,     // whole flight from the cut, ms
             OUT_MS:    450,      // at its end the payloads shoot off the top and it fades out, ms
             SCALE:     1.3,      // payload size in flight, × its size on the spring
             CRUISE_Y:  0.45,     // where they hold, fraction of the half's height from its top
@@ -763,7 +785,9 @@ var CONFIG = {
         FIT:       0.6,          // the box round the new spots and the colony so far fills this much of the half (centred on it)
         ZOOM_MAX:  1,            // closest view, screen px per map px @ design (× platformScale)
         FADE_MS:   250,          // the cut in (as the flight ends) and back out, ms
-        FALL_MS:   433,          // each one's fall from above the screen, ms
+        FALL_MS:   217,          // each one's fall from above the screen, ms
+        SHAKE:     0.006,        // each touchdown jolts the Mars view this much (fraction of its size; 0 = none)
+        SHAKE_MS:  120,          // …for this long, ms
         MAX_DELAY: 1000,         // each one starts after a random 0..this, ms
         HOLD_MS:   3000,         // after the last touchdown, before going back, ms
         SQUASH:    0.11,         // touchdown squash: this much flatter (and half as much wider)

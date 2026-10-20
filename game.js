@@ -1543,11 +1543,12 @@ class GameScene extends Phaser.Scene {
     // createSprings only builds what draws it, at the size the half allows
     // (springGeo.k — every design px below is multiplied by it).
 
-    // Spring i takes its piggy's push this second: a piggy in its slot, and
-    // not yet full.
+    // Spring i takes its piggy's push this second: a piggy in its slot, not
+    // yet full, and its payload already set down on it (s.waiting — from the
+    // release until _makePayload's set-down is over).
     _springWorking(i) {
         const s = this.springs[i];
-        return !!(this.chargingSlots[i] && s && s.phase === 'compressing');
+        return !!(this.chargingSlots[i] && s && s.phase === 'compressing' && !s.waiting);
     }
 
     // ONE STEP OF THE FORCE: the coil slides down over STEP_MS and stops
@@ -1558,6 +1559,16 @@ class GameScene extends Phaser.Scene {
         const ms = sc.STEP_MS || 250;
         this.tweens.killTweensOf(s);
         this.tweens.add({ targets: s, squeeze: s.compressed / s.max, duration: ms, ease: sc.STEP_EASE || 'Cubic.Out' });
+        // THE HAND WHEEL turns with the step: it is what winds the shaft in.
+        // By the distance, not the tick: FULL_TURNS winds a spring from rest
+        // to fully in at any level, so a tick turns it its share of that.
+        s.wheel = s.wheel || 0;
+        const frac = s.compressed / s.max, turns = (sc.WHEEL || {}).FULL_TURNS || 3;
+        const dTurn = (frac - (s.wheelFrac || 0)) * turns * Math.PI * 2;
+        s.wheelFrac = frac;
+        s.wheelTurning = true;          // no strain tremble while it turns (_drawSpring)
+        this.tweens.add({ targets: s, wheel: s.wheel + dTurn,
+            duration: ms, ease: sc.STEP_EASE || 'Cubic.Out', onComplete: () => { s.wheelTurning = false; } });
         s.bulge = 0;
         this.tweens.add({ targets: s, bulge: 1, duration: ms / 2, yoyo: true, ease: 'Sine.Out' });
         this._startRipple(s, sc.STEP_RIPPLE || 2, 1, sc.STEP_RIPPLE_MS || 180);
@@ -1621,20 +1632,30 @@ class GameScene extends Phaser.Scene {
         const next = levelStrengthsFor(this.level);
         this.springs.forEach((s, i) => {
             s.phase = 'releasing';
+            s.waiting = true;       // no squeeze till the next payload is on it
             this.tweens.killTweensOf(s);
             s.bulge = 0;
             s.arrow = 1;
+            // THE WHEEL SPINS BACK FREE as the shaft shoots out.
+            s.wheelFrac = 0;
+            s.wheelTurning = false;
+            this.tweens.add({ targets: s, wheel: (s.wheel || 0) - ((sc.WHEEL || {}).RELEASE_TURNS || 3) * Math.PI * 2,
+                duration: sc.RELEASE_MS || 700, ease: 'Cubic.Out' });
             this.tweens.add({
                 targets: s, squeeze: 0,
                 duration: sc.RELEASE_MS || 700,
                 ease: 'Elastic.Out',
                 onComplete: () => {
+                    if (s.launchPending) { s.launchPending = false; this._launchPayload(i); }   // never caught the turn
                     s.max = next[i]; s.compressed = 0; s.phase = 'compressing';
                     // Mid-flight, the flight's end brings them (_endFlight).
                     if (!this.flight && !this.landing) this.payloads[i] = this._makePayload(i, true);
                 },
             });
-            this._launchPayload(i);
+            // THE PAYLOAD RIDES THE PLATE UP and lets go at the top, as the
+            // plate turns back down (_updateSprings).
+            s.launchPending = true;
+            s.prevSq = undefined;
             this._startRipple(s, sc.RELEASE_RIPPLE || 30, -1);
             this._spawnDust(i);
         });
@@ -1688,6 +1709,16 @@ class GameScene extends Phaser.Scene {
         const dt = Math.min(delta, 50) / 1000;
         this._stepSky(this.flight ? this.flight.speed : 0, dt);
         if (this.skyGfx && this.skyGfx.scene) { this.skyGfx.clear(); this._drawSky(this.skyGfx, 0, 0); }
+        // LET GO AT THE TOP: a releasing plate's squeeze falls past rest to its
+        // highest point, then rises as it turns back down — that turn.
+        this.springs.forEach((s, i) => {
+            if (!s.launchPending) return;
+            if (s.prevSq !== undefined && s.squeeze > s.prevSq && s.squeeze < 0.5) {
+                s.launchPending = false;
+                this._launchPayload(i);
+            }
+            s.prevSq = s.squeeze;
+        });
         this._updateFlight(dt);
         this._updateLanding(dt);
         this._drawSprings();
@@ -1722,8 +1753,9 @@ class GameScene extends Phaser.Scene {
     // seats it on the top plate every frame; `drop` brings it in from above.
     _makePayload(i, drop, delay = 0) {
         const PL = CONFIG.PAYLOAD || {}, G = this.springGeo;
-        const key = payloadKey(this.level);
-        if (!G || !this.textures.exists(key)) return null;
+        const key = payloadKey(this.level), sp = this.springs[i];
+        if (sp) sp.waiting = !!drop;        // a set-down holds the squeeze till it's done
+        if (!G || !this.textures.exists(key)) { if (sp) sp.waiting = false; return null; }
         // THE PIVOT across the picture (PAYLOAD.PIVOT_X, by file): what stands
         // on the plate's centre — a flag's pole, not the middle of its cloth.
         const files = PL.FILES || [], file = files[(Math.max(1, this.level) - 1) % Math.max(1, files.length)];
@@ -1748,7 +1780,8 @@ class GameScene extends Phaser.Scene {
                     const seat = s.seat = s.seat || { v: 0 }, ms = PL.SEAT_MS || 260;
                     this.tweens.killTweensOf(seat);
                     this.tweens.add({ targets: seat, v: PL.SEAT_DIP !== undefined ? PL.SEAT_DIP : 7, duration: ms * 0.3, ease: 'Quad.Out',
-                        onComplete: () => this.tweens.add({ targets: seat, v: 0, duration: ms * 0.7, ease: 'Sine.Out' }) });
+                        onComplete: () => this.tweens.add({ targets: seat, v: 0, duration: ms * 0.7, ease: 'Sine.Out',
+                            onComplete: () => { s.waiting = false; } }) });
                 } });
         }
         return img;
@@ -1760,17 +1793,47 @@ class GameScene extends Phaser.Scene {
     _launchPayload(i) {
         const PL = CONFIG.PAYLOAD || {}, img = this.payloads[i];
         this.payloads[i] = null;
-        if (!img || !img.scene) return;
+        if (!img || !img.scene) { this._cutToFlightWhenClear(); return; }
         this.tweens.killTweensOf(img);
         img.setAlpha(1).setDepth(6);
         const B = this.layoutConfig.partB, spin = PL.LAUNCH_SPIN !== undefined ? PL.LAUNCH_SPIN : 25;
+        // OFF THE SCREEN (its bottom past the half's top): the flight may cut in.
+        const f = this.flight;
+        if (f) f.inView = (f.inView || 0) + 1;
+        let gone = false;
+        const leave = () => {
+            if (gone) return;
+            gone = true;
+            if (f && this.flight === f) { f.inView--; this._cutToFlightWhenClear(); }
+        };
         this.tweens.add({
             targets: img,
             y: B.y - 2 * B.height,
             scale: img.scale * 0.6,
             angle: (Math.random() * 2 - 1) * spin,
             duration: PL.LAUNCH_MS || 900, ease: 'Cubic.Out',
-            onComplete: () => img.destroy(),
+            onUpdate: () => { if (img.y < B.y) leave(); },
+            onComplete: () => { leave(); img.destroy(); },
+        });
+    }
+
+    // THE CUT TO THE FLIGHT, the moment nothing is left to see go: every
+    // payload let go and off the screen. No fade — the springs would linger.
+    _cutToFlightWhenClear() {
+        const f = this.flight;
+        if (!f || f.cut || this.springs.some((s) => s.launchPending) || (f.inView || 0) > 0) return;
+        this._cutToFlight();
+    }
+
+    _cutToFlight() {
+        const f = this.flight, F = (CONFIG.SKY || {}).FLIGHT || {}, B = this.layoutConfig.partB;
+        if (!f || f.cut) return;
+        f.cut = true;
+        f.alpha = 1;
+        f.imgs.forEach((img, i) => {
+            // Up into view from below, as the camera catches them.
+            this.tweens.add({ targets: img, by: img.cruiseY, alpha: 1, delay: 80 * i,
+                duration: F.ENTER_MS || 600, ease: 'Cubic.Out' });
         });
     }
 
@@ -1956,16 +2019,19 @@ class GameScene extends Phaser.Scene {
     // ── THE FLIGHT ───────────────────────────────────────────────────────────
 
     // Called on RELEASE, with the level that was just completed. The springs
-    // fling their payloads off the top; CUT_MS later the half cuts to the
-    // flight: the same three, climbing through the clouds into the stars.
+    // fling their payloads off the top; once they are off the screen the half
+    // cuts to the flight (_cutToFlight): the same three, climbing through the
+    // clouds into the stars.
     _startFlight(level) {
         const F = (CONFIG.SKY || {}).FLIGHT || {};
         if (F.ENABLED === false) return;
         const L = this.layoutConfig, B = L.partB, G = this.springGeo;
         const key = payloadKey(level);
         const g = this.flightGfx;
-        const f = this.flight = { t: 0, level, alt: F.START_ALT || 0.4, speed: 0, imgs: [], out: false, alpha: 0 };
-        this.tweens.add({ targets: f, alpha: 1, delay: F.CUT_MS || 450, duration: F.FADE_MS || 250 });
+        // HIDDEN TILL THE CUT (_cutToFlight): the payloads ride the springs up
+        // and leave the screen first. CUT_MAX_MS is a safety net.
+        const f = this.flight = { t: 0, level, alt: F.START_ALT || 0.4, speed: 0, imgs: [], out: false, alpha: 0, cut: false };
+        this.time.delayedCall(F.CUT_MAX_MS || 2000, () => { if (this.flight === f) this._cutToFlight(); });
         // ITS OWN CAMERA, its viewport the spring half: what it draws cannot
         // reach the grid, whatever the renderer (a mask could, on some mobile
         // GPUs). The main camera never draws the flight's layer; this one draws
@@ -1983,9 +2049,7 @@ class GameScene extends Phaser.Scene {
                 .setFlipX(((CONFIG.PAYLOAD || {}).MIRROR || []).includes(i));
             img.setScale(size / Math.max(img.frame.width, img.frame.height));
             img.by = img.y;
-            // Up into view from below, as the camera catches them.
-            this.tweens.add({ targets: img, by: B.y + B.height * (F.CRUISE_Y || 0.45) + (i - 1) * size * 0.15,
-                alpha: 1, delay: (F.CUT_MS || 450) + 80 * i, duration: F.ENTER_MS || 600, ease: 'Cubic.Out' });
+            img.cruiseY = B.y + B.height * (F.CRUISE_Y || 0.45) + (i - 1) * size * 0.15;
             f.imgs.push(img);
             this.cameras.main.ignore(img);
         });
@@ -2002,7 +2066,7 @@ class GameScene extends Phaser.Scene {
         const F = (CONFIG.SKY || {}).FLIGHT || {};
         const B = this.layoutConfig.partB, sc = this.layoutConfig.platformScale;
         const total = F.MS || 3200, outMs = F.OUT_MS || 450;
-        f.t += dt * 1000;
+        if (f.cut) f.t += dt * 1000;        // its clock starts at the cut
         const ramp = Math.min(1, f.t / (F.ACCEL_MS || 1400));
         f.speed = (F.SPEED || 3.5) * ramp * ramp;
         f.alt += f.speed * dt;
@@ -2170,6 +2234,8 @@ class GameScene extends Phaser.Scene {
                 duration: M.FALL_MS || 650, ease: 'Quad.In',
                 onComplete: () => {
                     this._landingDust(sp[0], y, img.displayWidth / 2, sp[2]);
+                    // A SMALL JOLT of the Mars view (its own camera; the grid keeps still).
+                    if (land.cam && (M.SHAKE || 0) > 0) land.cam.shake(M.SHAKE_MS || 120, M.SHAKE);
                     this.tweens.add({ targets: img, scaleY: s * (1 - q), scaleX: s * (1 + q / 2),
                         duration: sqMs, yoyo: true, ease: 'Quad.Out' });
                     // ALL DOWN: once the squash settles, what the item does,
@@ -2869,6 +2935,46 @@ class GameScene extends Phaser.Scene {
             stroke(n, lw + 4 * k, outline, 1, 0);
             stroke(n, lw, hexColor(sc.BACK_COLOR || '#546E7A'), 1, 0);
         }
+        // THE SHAFT, between the coil's back and front halves so it reads as
+        // inside it: nested tubes from the base plate up to the top plate,
+        // each section shortening as the plate comes down, a collar where each
+        // thinner one comes out, and a thread on the top one that comes down
+        // with the plate.
+        const SH = sc.SHAFT || {}, ow = Math.max(1, 2 * k);
+        if (SH.ENABLED !== false) {
+            const n = SH.SEGMENTS || 3, y0 = baseY, span = y0 - (topY + shiver);
+            const sw = (SH.W || 44) * k, taper = SH.TAPER !== undefined ? SH.TAPER : 0.22;
+            const body = hexColor(SH.COLOR || '#90A4AE'), dark = lerpColor(body, 0x000000, 0.3);
+            const tube = (b) => ({ hw: sw / 2 * (1 - taper * b), ya: y0 - span * b / n, yb: y0 - span * (b + 1) / n });
+            for (let b = 0; b < n; b++) {
+                const { hw, ya, yb } = tube(b), h = ya - yb;
+                g.fillStyle(body, 1);
+                g.fillRect(cx - hw, yb, 2 * hw, h);
+                g.fillStyle(dark, 1);                                   // shade, right side
+                g.fillRect(cx + hw * 0.3, yb, hw * 0.7, h);
+                g.fillStyle(0xFFFFFF, 0.55);                            // highlight, left side
+                g.fillRect(cx - hw * 0.65, yb, hw * 0.22, h);
+                if (b === n - 1) {
+                    // THE THREAD rides with the top plate (counted down from the
+                    // tube's top), so it comes down as the plate does — fixed
+                    // to the screen, the shaft would seem to stand still and
+                    // pierce the plate.
+                    const p = (SH.PITCH || 9) * k;
+                    g.lineStyle(Math.max(1, 2 * k), hexColor(SH.THREAD || '#455A64'), 0.8);
+                    for (let y = yb + hw * 0.5 + p * 0.5; y < ya; y += p) g.lineBetween(cx - hw, y, cx + hw, y - hw * 0.5);
+                }
+                g.lineStyle(ow, outlineC, 1);
+                g.strokeRect(cx - hw, yb, 2 * hw, h);
+            }
+            const ch = (SH.COLLAR || 7) * k;
+            for (let b = 0; b < n - 1; b++) {
+                const { hw, yb } = tube(b);
+                g.fillStyle(dark, 1);
+                g.fillRect(cx - hw - 2 * k, yb, 2 * hw + 4 * k, ch);
+                g.lineStyle(ow, outlineC, 1);
+                g.strokeRect(cx - hw - 2 * k, yb, 2 * hw + 4 * k, ch);
+            }
+        }
         for (let n = 0; n < coils * 2; n += 2) {
             stroke(n, lw + 4 * k, outline, 1, 0);
             stroke(n, lw, front, 1, 0);
@@ -2903,6 +3009,40 @@ class GameScene extends Phaser.Scene {
                 g.fillPath();
                 g.strokePath();
             }
+        }
+
+        // THE HAND WHEEL on the base plate's front, nearest the viewer: rim,
+        // spokes, hub and a grip, turned by s.wheel. The shaft's own metal
+        // (its body, collar shade, highlight and thread), so the two read as
+        // one part — the wheel winding the shaft in.
+        const WH = sc.WHEEL || {};
+        if (WH.ENABLED !== false) {
+            const bRx = w / 2 + 30 * k, bRy = bRx * (sc.COIL_TILT || 22) / ((sc.WIDTH || 170) / 2);
+            // STRAIN: holding the squeeze, it trembles with the plate's shiver
+            // (same tension, same beat), leaning back toward unwinding — the
+            // spring pushing on it. Never while it turns.
+            const strain = s.wheelTurning ? 0 : (WH.STRAIN_DEG !== undefined ? WH.STRAIN_DEG : 2.5) * Math.PI / 180 * tension;
+            const wx = cx, wy = baseY + bRy + plateH / 2, R = (WH.R || 30) * k,
+                a0 = (s.wheel || 0) - strain * (0.5 + 0.5 * Math.sin(t * 0.09 + idx * 2.1));
+            const SHc = sc.SHAFT || {};
+            const wc = hexColor(WH.COLOR || SHc.COLOR || '#90A4AE'), rw = Math.max(2, (WH.RIM || 7) * k), sp = WH.SPOKES || 4;
+            const hub = lerpColor(wc, 0x000000, 0.3);          // the shaft's collar shade
+            for (const [width, c, al] of [[rw + 2 * ow, outlineC, 1], [rw, wc, 1], [Math.max(1, rw * 0.3), 0xFFFFFF, 0.45]]) {
+                g.lineStyle(width, c, al);
+                for (let j = 0; j < sp; j++) {
+                    const a = a0 + j * Math.PI * 2 / sp;
+                    g.lineBetween(wx, wy, wx + R * Math.cos(a), wy + R * Math.sin(a));
+                }
+                g.strokeCircle(wx, wy, R);
+            }
+            g.fillStyle(outlineC, 1);
+            g.fillCircle(wx, wy, R * 0.3);
+            g.fillStyle(hub, 1);
+            g.fillCircle(wx, wy, R * 0.3 - ow);
+            g.fillStyle(outlineC, 1);
+            g.fillCircle(wx + R * Math.cos(a0), wy + R * Math.sin(a0), rw * 0.9 + ow);
+            g.fillStyle(hexColor(WH.KNOB || SHc.THREAD || '#455A64'), 1);
+            g.fillCircle(wx + R * Math.cos(a0), wy + R * Math.sin(a0), rw * 0.9);
         }
 
         disc(topY + shiver - plateH, w / 2 + 10 * k);
